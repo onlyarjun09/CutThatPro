@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CutThat Pro</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <header id="panel-header">
+      <h1>CutThat Pro</h1>
+      <div id="connection-status" class="status-badge disconnected">Disconnected</div>
+    </header>
+
+    <nav id="tab-bar">
+      <button class="tab-btn active" data-tab="auto-cut">Auto Cut</button>
+      <button class="tab-btn" data-tab="captions">Captions</button>
+      <button class="tab-btn" data-tab="zoom">Zoom</button>
+      <button class="tab-btn" data-tab="broll">B-Roll</button>
+      <button class="tab-btn" data-tab="settings">Settings</button>
+    </nav>
+
+    <!-- ======================== AUTO CUT TAB ======================== -->
+    <section id="tab-auto-cut" class="tab-panel active">
+      <div class="panel-section">
+        <h2>Sequence</h2>
+        <div class="button-row">
+          <button id="btn-test-connection" class="btn btn-secondary">Test Connection</button>
+          <button id="btn-duplicate-seq" class="btn btn-secondary">Duplicate Sequence</button>
+        </div>
+        <div id="sequence-info" class="info-box"></div>
+      </div>
+
+      <div class="panel-section">
+        <h2>Detection Engine</h2>
+        <div class="form-row">
+          <label for="detection-engine">Engine</label>
+          <select id="detection-engine">
+            <option value="silero_vad">Silero VAD (Recommended)</option>
+            <option value="whisper">Whisper (Transcription-based)</option>
+            <option value="ffmpeg_silence">FFmpeg Silence Detect</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="cut-style">Cut Style</label>
+          <select id="cut-style">
+            <option value="soft">Soft</option>
+            <option value="natural" selected>Natural</option>
+            <option value="tight">Tight</option>
+            <option value="aggressive">Aggressive</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="panel-section" id="vad-settings-section">
+        <h2>VAD Settings</h2>
+        <div class="form-row">
+          <label for="vad-min-pause">Min Pause (s)</label>
+          <input type="number" id="vad-min-pause" value="0.9" step="0.05" min="0.1" max="5.0">
+        </div>
+        <div class="form-row">
+          <label for="vad-padding-before">Padding Before (s)</label>
+          <input type="number" id="vad-padding-before" value="0.25" step="0.05" min="0" max="1.0">
+        </div>
+        <div class="form-row">
+          <label for="vad-padding-after">Padding After (s)</label>
+          <input type="number" id="vad-padding-after" value="0.25" step="0.05" min="0" max="1.0">
+        </div>
+        <div class="form-row">
+          <label for="vad-max-cut-duration">Max Cut Duration (s)</label>
+          <input type="number" id="vad-max-cut-duration" value="3.0" step="0.1" min="0.5" max="10.0">
+        </div>
+      </div>
+
+      <div class="panel-section" id="ffmpeg-settings-section" style="display:none;">
+        <h2>FFmpeg Settings</h2>
+        <div class="form-row">
+          <label for="noise-threshold">Noise Threshold (dB)</label>
+          <input type="number" id="noise-threshold" value="-35" step="1" min="-80" max="0">
+        </div>
+        <div class="form-row">
+          <label for="min-silence">Min Silence Duration (s)</label>
+          <input type="number" id="min-silence" value="0.5" step="0.1" min="0.1" max="5.0">
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <h2>Track Targeting</h2>
+        <div class="form-row">
+          <label for="video-track-mode">Video Tracks</label>
+          <select id="video-track-mode">
+            <option value="v1">V1 Only</option>
+            <option value="all">All Video Tracks</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="audio-track-mode">Audio Tracks</label>
+          <select id="audio-track-mode">
+            <option value="a1">A1 Only</option>
+            <option value="all">All Audio Tracks</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <h2>Analyze</h2>
+        <div class="button-row">
+          <button id="btn-export-audio" class="btn btn-primary">Export Audio</button>
+          <button id="btn-analyze-silence" class="btn btn-primary">Analyze Silence</button>
+        </div>
+        <div class="progress-bar-container" id="analyze-progress" style="display:none;">
+          <div class="progress-bar" id="analyze-progress-bar"></div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <h2>Results</h2>
+        <div id="cut-results" class="results-box"></div>
+        <div class="button-row">
+          <button id="btn-add-markers" class="btn btn-secondary" disabled>Add Markers</button>
+          <button id="btn-add-razor-cuts" class="btn btn-secondary" disabled>Add Razor Cuts</button>
+          <button id="btn-apply-clean-cut" class="btn btn-primary" disabled>Apply Clean Cut</button>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div id="status" class="status-line"></div>
+        <div id="result" class="result-box"></div>
+      </div>
+    </section>
+
+    <!-- ======================== CAPTIONS TAB ======================== -->
+    <section id="tab-captions" class="tab-panel">
+      <div class="panel-section">
+        <h2>Transcription</h2>
+        <div class="form-row">
+          <label for="caption-language">Language</label>
+          <select id="caption-language">
+            <option value="en">English</option>
+            <option value="es">Spanish</option>
+            <option value="fr">French</option>
+            <option value="de">German</option>
+            <option value="ja">Japanese</option>
+            <option value="zh">Chinese</option>
+            <option value="auto">Auto-detect</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label for="whisper-model">Model</label>
+          <select id="whisper-model">
+            <option value="tiny">Tiny (fastest)</option>
+            <option value="base">Base</option>
+            <option value="small" selected>Small (balanced)</option>
+            <option value="medium">Medium</option>
+            <option value="large-v3">Large (best quality)</option>
+          </select>
+        </div>
+        <div class="button-row">
+          <button id="btn-transcribe" class="btn btn-primary">Transcribe Audio</button>
+        </div>
+        <div class="progress-bar-container" id="transcribe-progress" style="display:none;">
+          <div class="progress-bar" id="transcribe-progress-bar"></div>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <h2>Captions Output</h2>
+        <div id="transcript-output" class="results-box transcript-box"></div>
+        <div class="button-row">
+          <button id="btn-export-srt" class="btn btn-secondary" disabled>Export SRT</button>
+          <button id="btn-add-caption-track" class="btn btn-primary" disabled>Add to Timeline</button>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div id="caption-status" class="status-line"></div>
+      </div>
+    </section>
+
+    <!-- ======================== ZOOM TAB ======================== -->
+    <section id="tab-zoom" class="tab-panel">
+      <div class="panel-section">
+        <h2>Auto Zoom</h2>
+        <p class="section-description">Automatically add zoom keyframes at keyword moments to emphasize speech.</p>
+        <div class="form-row">
+          <label for="zoom-keywords">Keywords (comma-separated)</label>
+          <input type="text" id="zoom-keywords" placeholder="important, key, remember, listen">
+        </div>
+        <div class="form-row">
+          <label for="zoom-scale">Zoom Scale (%)</label>
+          <input type="number" id="zoom-scale" value="120" step="5" min="100" max="200">
+        </div>
+        <div class="form-row">
+          <label for="zoom-duration">Zoom Duration (s)</label>
+          <input type="number" id="zoom-duration" value="1.5" step="0.1" min="0.5" max="5.0">
+        </div>
+        <div class="form-row">
+          <label for="zoom-ease">Ease In/Out</label>
+          <select id="zoom-ease">
+            <option value="linear">Linear</option>
+            <option value="ease" selected>Ease In/Out</option>
+            <option value="ease-in">Ease In</option>
+            <option value="ease-out">Ease Out</option>
+          </select>
+        </div>
+        <div class="button-row">
+          <button id="btn-find-zoom-moments" class="btn btn-secondary">Find Zoom Moments</button>
+          <button id="btn-apply-zoom" class="btn btn-primary" disabled>Apply Zoom Keyframes</button>
+        </div>
+        <div id="zoom-results" class="results-box"></div>
+      </div>
+
+      <div class="panel-section">
+        <div id="zoom-status" class="status-line"></div>
+      </div>
+    </section>
+
+    <!-- ======================== B-ROLL TAB ======================== -->
+    <section id="tab-broll" class="tab-panel">
+      <div class="panel-section">
+        <h2>B-Roll Suggestions</h2>
+        <p class="section-description">Extract keywords from transcript and search Pexels for matching B-Roll footage.</p>
+        <div class="form-row">
+          <label for="pexels-api-key">Pexels API Key</label>
+          <input type="password" id="pexels-api-key" placeholder="Your Pexels API key">
+        </div>
+        <div class="form-row">
+          <label for="broll-max-keywords">Max Keywords</label>
+          <input type="number" id="broll-max-keywords" value="5" step="1" min="1" max="20">
+        </div>
+        <div class="form-row">
+          <label for="broll-orientation">Video Orientation</label>
+          <select id="broll-orientation">
+            <option value="landscape" selected>Landscape</option>
+            <option value="portrait">Portrait</option>
+            <option value="square">Square</option>
+          </select>
+        </div>
+        <div class="button-row">
+          <button id="btn-extract-keywords" class="btn btn-secondary">Extract Keywords</button>
+          <button id="btn-search-broll" class="btn btn-primary" disabled>Search B-Roll</button>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <h2>Results</h2>
+        <div id="broll-keywords" class="info-box"></div>
+        <div id="broll-results" class="broll-grid"></div>
+        <div class="button-row">
+          <button id="btn-insert-broll" class="btn btn-primary" disabled>Insert Selected B-Roll</button>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div id="broll-status" class="status-line"></div>
+      </div>
+    </section>
+
+    <!-- ======================== SETTINGS TAB ======================== -->
+    <section id="tab-settings" class="tab-panel">
+      <div class="panel-section">
+        <h2>Backend</h2>
+        <div class="form-row">
+          <label for="backend-url">Backend URL</label>
+          <input type="text" id="backend-url" value="http://127.0.0.1:3456">
+        </div>
+        <div class="button-row">
+          <button id="btn-check-backend" class="btn btn-secondary">Check Backend Health</button>
+        </div>
+        <div id="backend-health" class="info-box"></div>
+      </div>
+
+      <div class="panel-section">
+        <h2>API Keys</h2>
+        <div class="form-row">
+          <label for="settings-pexels-key">Pexels API Key</label>
+          <input type="password" id="settings-pexels-key" placeholder="Pexels API key">
+        </div>
+        <div class="form-row">
+          <label for="settings-openai-key">OpenAI API Key</label>
+          <input type="password" id="settings-openai-key" placeholder="OpenAI API key (for keyword extraction)">
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <h2>Preferences</h2>
+        <div class="form-row">
+          <label for="settings-temp-dir">Temp Directory</label>
+          <input type="text" id="settings-temp-dir" value="">
+          <button id="btn-browse-temp" class="btn btn-small">Browse</button>
+        </div>
+        <div class="form-row checkbox-row">
+          <input type="checkbox" id="settings-auto-duplicate" checked>
+          <label for="settings-auto-duplicate">Auto-duplicate sequence before cuts</label>
+        </div>
+        <div class="form-row checkbox-row">
+          <input type="checkbox" id="settings-keep-markers">
+          <label for="settings-keep-markers">Keep CutThat markers after applying cuts</label>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <h2>About</h2>
+        <div class="about-info">
+          <p><strong>CutThat Pro</strong> v1.0.0</p>
+          <p>Premiere Pro CEP Plugin for automated editing workflows.</p>
+          <p>Auto Cut &middot; Captions &middot; Zoom &middot; B-Roll</p>
+        </div>
+      </div>
+
+      <div class="panel-section">
+        <div id="settings-status" class="status-line"></div>
+      </div>
+    </section>
+  </div>
+
+  <script src="js/CSInterface.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
