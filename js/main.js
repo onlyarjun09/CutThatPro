@@ -596,7 +596,7 @@
           endpoint = "/analyze-whisper-vad";
           payload = {
             filePath: info.audioPath,
-            language: "en",
+            language: state.detectedLanguage ? state.detectedLanguage.code : "auto",
             removePauses: true,
             removeRepeatedWords: true,
             removeRepeatedPhrases: true,

@@ -137,6 +137,11 @@ def main():
         print(json.dumps({"error": f"File not found: {args.filePath}"}))
         sys.exit(1)
     
+    # Normalize language: "auto" or "null" means let Whisper auto-detect
+    lang = args.language
+    if lang and lang.lower() in ("auto", "null", "none", ""):
+        lang = None
+    
     # Check if it's a video or audio file
     video_exts = {'.mp4', '.mov', '.avi', '.mkv', '.mxf', '.m4v', '.webm', '.flv'}
     _, ext = os.path.splitext(args.filePath.lower())
@@ -157,7 +162,7 @@ def main():
         silences, sil_error = detect_silence_ffmpeg(audio_path, args.noiseThreshold, args.minSilenceDuration)
         
         # Step 2: Whisper transcription
-        segments, detected_lang, duration, whisper_error = transcribe_with_whisper(audio_path, args.modelSize, args.language)
+        segments, detected_lang, duration, whisper_error = transcribe_with_whisper(audio_path, args.modelSize, lang)
         
         # Step 3: Find gaps from transcript
         transcript_gaps = []
