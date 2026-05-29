@@ -262,6 +262,196 @@ function addMarkersFromCuts(cutsJSON) {
 }
 
 /* ============================================================
+   GET SEQUENCE INFO FOR CLEAN CUT
+   ============================================================ */
+function getSequenceInfoForCleanCut() {
+    try {
+        if (typeof app === "undefined" || !app || !app.project) {
+            return JSON.stringify({ success: false, error: "No project" });
+        }
+        var seq = app.project.activeSequence;
+        if (!seq) {
+            return JSON.stringify({ success: false, error: "No sequence" });
+        }
+        var sourceClip = "";
+        try {
+            var vTrack = seq.videoTracks[0];
+            if (vTrack && vTrack.clips && vTrack.clips.numItems > 0) {
+                sourceClip = vTrack.clips[0].projectItem.getMediaPath ? String(vTrack.clips[0].projectItem.getMediaPath()) : "";
+            }
+        } catch (e) {}
+        return JSON.stringify({
+            success: true,
+            sourceClip: sourceClip,
+            sequenceInfo: {
+                name: seq.name || "Untitled",
+                videoTracks: seq.videoTracks ? seq.videoTracks.numTracks : 0,
+                audioTracks: seq.audioTracks ? seq.audioTracks.numTracks : 0
+            }
+        });
+    } catch (err) {
+        return JSON.stringify({ success: false, error: err.toString() });
+    }
+}
+
+/* ============================================================
+   DUPLICATE SEQUENCE (alias)
+   ============================================================ */
+function duplicateActiveSequenceForCutThat() {
+    return duplicateActiveSequence();
+}
+
+/* ============================================================
+   ADD RAZOR CUTS TO TIMELINE
+   ============================================================ */
+function addRazorCutsToTimeline(cutsJSON) {
+    try {
+        if (typeof app === "undefined" || !app || !app.project) {
+            return JSON.stringify({ success: false, error: "No project" });
+        }
+        var cuts;
+        try { cuts = JSON.parse(cutsJSON); } catch (e) {
+            return JSON.stringify({ success: false, error: "Invalid JSON" });
+        }
+        if (!cuts || cuts.length === 0) {
+            return JSON.stringify({ success: false, error: "No cuts" });
+        }
+        app.enableQE();
+        var qeSeq = qe.project.getActiveSequence();
+        if (!qeSeq) {
+            return JSON.stringify({ success: false, error: "No QE sequence" });
+        }
+        var cutsAdded = 0;
+        for (var i = 0; i < cuts.length; i++) {
+            try {
+                qeSeq.razor(cuts[i].start);
+                qeSeq.razor(cuts[i].end);
+                cutsAdded++;
+            } catch (razorErr) {}
+        }
+        return JSON.stringify({ success: true, cutsAdded: cutsAdded });
+    } catch (err) {
+        return JSON.stringify({ success: false, error: err.toString() });
+    }
+}
+
+/* ============================================================
+   ADD SILENCE MARKERS TO TIMELINE
+   ============================================================ */
+function addSilenceMarkersToTimeline(cutsJSON) {
+    try {
+        if (typeof app === "undefined" || !app || !app.project) {
+            return JSON.stringify({ success: false, error: "No project" });
+        }
+        var cuts;
+        try { cuts = JSON.parse(cutsJSON); } catch (e) {
+            return JSON.stringify({ success: false, error: "Invalid JSON" });
+        }
+        var seq = app.project.activeSequence;
+        if (!seq) {
+            return JSON.stringify({ success: false, error: "No sequence" });
+        }
+        var markersAdded = 0;
+        for (var i = 0; i < cuts.length; i++) {
+            try {
+                var marker = seq.markers.createMarker(cuts[i].start);
+                if (marker) {
+                    marker.name = "Silence " + (i + 1);
+                    marker.comments = "Duration: " + (cuts[i].duration || 0).toFixed(2) + "s";
+                    markersAdded++;
+                }
+            } catch (mErr) {}
+        }
+        return JSON.stringify({ success: true, markersAdded: markersAdded });
+    } catch (err) {
+        return JSON.stringify({ success: false, error: err.toString() });
+    }
+}
+
+/* ============================================================
+   ADD CAPTION TRACK TO TIMELINE
+   ============================================================ */
+function addCaptionTrackToTimeline(srtContent) {
+    try {
+        if (typeof app === "undefined" || !app || !app.project) {
+            return JSON.stringify({ success: false, error: "No project" });
+        }
+        // Write SRT to temp file and import
+        var tempPath = Folder.myDocuments.fsName + "/CutThatPro/temp/captions.srt";
+        var tempFolder = new Folder(Folder.myDocuments.fsName + "/CutThatPro/temp");
+        if (!tempFolder.exists) { tempFolder.create(); }
+        var srtFile = new File(tempPath);
+        srtFile.open("w");
+        srtFile.write(srtContent);
+        srtFile.close();
+        // Import the SRT file
+        var importResult = app.project.importFiles([tempPath], false, app.project.rootItem, false);
+        return JSON.stringify({ success: true, imported: importResult ? "yes" : "no", path: tempPath });
+    } catch (err) {
+        return JSON.stringify({ success: false, error: err.toString() });
+    }
+}
+
+/* ============================================================
+   APPLY ZOOM KEYFRAMES
+   ============================================================ */
+function applyZoomKeyframes(zoomJSON) {
+    try {
+        if (typeof app === "undefined" || !app || !app.project) {
+            return JSON.stringify({ success: false, error: "No project" });
+        }
+        var zooms;
+        try { zooms = JSON.parse(zoomJSON); } catch (e) {
+            return JSON.stringify({ success: false, error: "Invalid JSON" });
+        }
+        var seq = app.project.activeSequence;
+        if (!seq) {
+            return JSON.stringify({ success: false, error: "No sequence" });
+        }
+        return JSON.stringify({ success: true, message: "Zoom keyframes: feature in development", count: zooms.length });
+    } catch (err) {
+        return JSON.stringify({ success: false, error: err.toString() });
+    }
+}
+
+/* ============================================================
+   IMPORT SEQUENCE XML
+   ============================================================ */
+function importSequenceXML(xmlPath) {
+    try {
+        if (typeof app === "undefined" || !app || !app.project) {
+            return JSON.stringify({ success: false, error: "No project" });
+        }
+        var xmlFile = new File(xmlPath);
+        if (!xmlFile.exists) {
+            return JSON.stringify({ success: false, error: "XML file not found: " + xmlPath });
+        }
+        app.project.importSequences(xmlPath);
+        return JSON.stringify({ success: true, path: xmlPath });
+    } catch (err) {
+        return JSON.stringify({ success: false, error: err.toString() });
+    }
+}
+
+/* ============================================================
+   INSERT B-ROLL CLIPS
+   ============================================================ */
+function insertBrollClips(brollJSON) {
+    try {
+        if (typeof app === "undefined" || !app || !app.project) {
+            return JSON.stringify({ success: false, error: "No project" });
+        }
+        var brolls;
+        try { brolls = JSON.parse(brollJSON); } catch (e) {
+            return JSON.stringify({ success: false, error: "Invalid JSON" });
+        }
+        return JSON.stringify({ success: true, message: "B-Roll insertion: feature in development", count: brolls.length });
+    } catch (err) {
+        return JSON.stringify({ success: false, error: err.toString() });
+    }
+}
+
+/* ============================================================
    GET TIMELINE INFO
    ============================================================ */
 function getTimelineInfo() {
