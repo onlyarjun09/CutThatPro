@@ -323,46 +323,82 @@
     var cs = getCSInterface();
     if (!cs) {
       setStatus("CSInterface not available");
+      setResult("ERROR: CSInterface.js not loaded. Check js/CSInterface.js");
       return;
     }
 
-    var extensionRoot = cs.getSystemPath(SystemPath.EXTENSION);
-    var jsxPath = extensionRoot + "/jsx/host.jsx";
-    var escapedPath = jsxPath.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-
-    var script =
-      'try {' +
-      '$.evalFile(File("' + escapedPath + '"));' +
-      '"HOST_LOAD_OK";' +
-      '} catch (e) {' +
-      '"HOST_LOAD_ERROR: " + e.toString();' +
-      '}';
-
-    cs.evalScript(script, function (loadResponse) {
-      if (!loadResponse || loadResponse === "EvalScript error.") {
-        setStatus("Host JSX load failed");
-        setResult("Could not load host.jsx. Check manifest and restart Premiere.");
+    // First: check if host.jsx is ALREADY loaded (from manifest ScriptPath auto-load)
+    cs.evalScript("typeof testPremiereConnection", function (typeResponse) {
+      if (typeResponse === "function") {
+        // Auto-load worked! Functions already available
+        state.hostLoaded = true;
+        setStatus("Host auto-loaded from manifest");
+        setConnectionStatus(true);
+        autoTestConnection();
         return;
       }
 
-      if (String(loadResponse).indexOf("HOST_LOAD_ERROR:") === 0) {
-        setStatus("Host JSX load failed");
-        setResult(loadResponse);
-        return;
-      }
+      // Auto-load didn't work, try manual $.evalFile
+      var extensionRoot = cs.getSystemPath(SystemPath.EXTENSION);
+      var jsxPath = extensionRoot + "/jsx/host.jsx";
+      var escapedPath = jsxPath.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 
-      // Verify with ping
-      cs.evalScript("cutThatHostPing()", function (pingResponse) {
-        if (!pingResponse || pingResponse === "EvalScript error.") {
-          setStatus("Host loaded (ping failed)");
-          setResult(loadResponse + "\nHost ping failed. Restart Premiere.");
+      var script =
+        'try {' +
+        '$.evalFile(File("' + escapedPath + '"));' +
+        '"HOST_LOAD_OK";' +
+        '} catch (e) {' +
+        '"HOST_LOAD_ERROR: " + e.toString();' +
+        '}';
+
+      cs.evalScript(script, function (loadResponse) {
+        if (!loadResponse || loadResponse === "EvalScript error.") {
+          setStatus("Host JSX load failed");
+          setResult("Could not load host.jsx.\nPath: " + jsxPath + "\nRestart Premiere Pro (Cmd+Q → reopen).");
           return;
         }
-        state.hostLoaded = true;
-        setStatus("Host JSX loaded");
-        setResult(loadResponse + "\n" + pingResponse);
-        setConnectionStatus(true);
+
+        if (String(loadResponse).indexOf("HOST_LOAD_ERROR:") === 0) {
+          setStatus("Host JSX load error");
+          setResult(loadResponse + "\nPath: " + jsxPath);
+          return;
+        }
+
+        // Verify with ping
+        cs.evalScript("cutThatHostPing()", function (pingResponse) {
+          if (!pingResponse || pingResponse === "EvalScript error.") {
+            setStatus("Host loaded but ping failed");
+            setResult(loadResponse + "\nPing failed. Functions may not be available.");
+            return;
+          }
+          state.hostLoaded = true;
+          setStatus("Host JSX loaded (manual)");
+          setResult(loadResponse + " | " + pingResponse + "\nPath: " + jsxPath);
+          setConnectionStatus(true);
+          autoTestConnection();
+        });
       });
+    });
+  }
+
+  /* ============================================================
+     AUTO TEST CONNECTION (called after loadJSX succeeds)
+     ============================================================ */
+  function autoTestConnection() {
+    runScript("testPremiereConnection()", function (response, error) {
+      if (error) {
+        setConnectionStatus(false);
+        setResult("Auto-test failed: " + error);
+        return;
+      }
+      var data = parseJsonResponse(response);
+      if (data && data.success) {
+        setConnectionStatus(true);
+        setResult("Connected to: " + data.projectName + " | Sequence: " + data.sequenceName);
+      } else {
+        setConnectionStatus(false);
+        setResult("Connection test: " + (data ? data.error : response));
+      }
     });
   }
 
