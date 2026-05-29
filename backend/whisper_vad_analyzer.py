@@ -5,6 +5,7 @@ import sys
 import json
 import os
 import subprocess
+import argparse
 import tempfile
 
 FFMPEG_PATH = "/opt/homebrew/bin/ffmpeg"
@@ -113,29 +114,39 @@ def find_silence_from_transcript(segments, min_pause=0.9, padding_before=0.25, p
     
     return gaps
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print(json.dumps({"error": "Usage: python3 whisper_vad_analyzer.py <file_path> [model_size] [language]"}))
-        sys.exit(1)
+def main():
+    parser = argparse.ArgumentParser(description="Whisper VAD Analyzer")
+    parser.add_argument("--filePath", required=True, help="Path to audio/video file")
+    parser.add_argument("--modelSize", default="base", help="Whisper model size")
+    parser.add_argument("--language", default=None, help="Language code")
+    parser.add_argument("--minPauseDuration", type=float, default=0.9, help="Min pause duration")
+    parser.add_argument("--paddingBefore", type=float, default=0.25, help="Padding before cut")
+    parser.add_argument("--paddingAfter", type=float, default=0.25, help="Padding after cut")
+    parser.add_argument("--maxCutDuration", type=float, default=3.0, help="Max cut duration")
+    parser.add_argument("--noiseThreshold", default="-35dB", help="FFmpeg noise threshold")
+    parser.add_argument("--minSilenceDuration", type=float, default=0.5, help="Min silence duration")
+    parser.add_argument("--removePauses", type=str, default="true", help="Remove pauses")
+    parser.add_argument("--removeRepeatedWords", type=str, default="true", help="Remove repeated words")
+    parser.add_argument("--removeRepeatedPhrases", type=str, default="true", help="Remove repeated phrases")
+    parser.add_argument("--removeFillers", type=str, default="false", help="Remove fillers")
+    parser.add_argument("--minEffectiveCutDuration", type=float, default=0.35, help="Min effective cut duration")
     
-    file_path = sys.argv[1]
-    model_size = sys.argv[2] if len(sys.argv) > 2 else "base"
-    language = sys.argv[3] if len(sys.argv) > 3 else None
+    args = parser.parse_args()
     
-    if not os.path.exists(file_path):
-        print(json.dumps({"error": f"File not found: {file_path}"}))
+    if not os.path.exists(args.filePath):
+        print(json.dumps({"error": f"File not found: {args.filePath}"}))
         sys.exit(1)
     
     # Check if it's a video or audio file
     video_exts = {'.mp4', '.mov', '.avi', '.mkv', '.mxf', '.m4v', '.webm', '.flv'}
-    _, ext = os.path.splitext(file_path.lower())
+    _, ext = os.path.splitext(args.filePath.lower())
     
-    audio_path = file_path
+    audio_path = args.filePath
     temp_audio = None
     
     # If video, extract audio first
     if ext in video_exts:
-        audio_path, error = extract_audio_from_video(file_path)
+        audio_path, error = extract_audio_from_video(args.filePath)
         if error:
             print(json.dumps({"error": f"Audio extraction failed: {error}"}))
             sys.exit(1)
@@ -143,15 +154,21 @@ if __name__ == "__main__":
     
     try:
         # Step 1: FFmpeg silence detection
-        silences, sil_error = detect_silence_ffmpeg(audio_path)
+        silences, sil_error = detect_silence_ffmpeg(audio_path, args.noiseThreshold, args.minSilenceDuration)
         
         # Step 2: Whisper transcription
-        segments, detected_lang, duration, whisper_error = transcribe_with_whisper(audio_path, model_size, language)
+        segments, detected_lang, duration, whisper_error = transcribe_with_whisper(audio_path, args.modelSize, args.language)
         
         # Step 3: Find gaps from transcript
         transcript_gaps = []
         if segments:
-            transcript_gaps = find_silence_from_transcript(segments)
+            transcript_gaps = find_silence_from_transcript(
+                segments, 
+                args.minPauseDuration, 
+                args.paddingBefore, 
+                args.paddingAfter, 
+                args.maxCutDuration
+            )
         
         # Combine results
         all_cuts = []
@@ -188,7 +205,7 @@ if __name__ == "__main__":
         
         result = {
             "success": True,
-            "cutCandidates": all_cuts if all_cuts else all_cuts,
+            "cutCandidates": all_cuts,
             "totalSilences": len(silences),
             "totalTranscriptGaps": len(transcript_gaps),
             "totalCuts": len(all_cuts),
@@ -209,3 +226,6 @@ if __name__ == "__main__":
                 os.remove(temp_audio)
             except:
                 pass
+
+if __name__ == "__main__":
+    main()
