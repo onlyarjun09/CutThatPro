@@ -1,86 +1,100 @@
 #!/usr/bin/env python3
-"""CutThat Pro — Whisper Transcription + VAD Analyzer"""
+"""CutThat Pro — VAD Analyzer
+Silence detection using FFmpeg + optional Whisper transcription"""
 import sys
 import json
 import os
+import subprocess
+import argparse
 import tempfile
 
-def transcribe_with_faster_whisper(audio_path, model_size="base", language=None):
-    """Transcribe audio using faster-whisper"""
-    try:
-        from faster_whisper import WhisperModel
-        model = WhisperModel(model_size, device="auto", compute_type="auto")
-        segments, info = model.transcribe(audio_path, language=language, vad_filter=True)
-        
-        result = {
-            "text": "",
-            "segments": [],
-            "language": info.language,
-            "duration": info.duration
-        }
-        
-        full_text = []
-        for seg in segments:
-            result["segments"].append({
-                "id": seg.id,
-                "start": round(seg.start, 3),
-                "end": round(seg.end, 3),
-                "text": seg.text.strip(),
-                "avg_logprob": round(seg.avg_logprob, 4),
-                "no_speech_prob": round(seg.no_speech_prob, 4)
-            })
-            full_text.append(seg.text.strip())
-        
-        result["text"] = " ".join(full_text)
-        return result
-    except ImportError:
-        return {"error": "faster-whisper not installed. Run: pip3 install faster-whisper"}
-    except Exception as e:
-        return {"error": str(e)}
+FFMPEG_PATH = "/opt/homebrew/bin/ffmpeg"
 
-def transcribe_with_openai_whisper(audio_path, model_size="base"):
-    """Transcribe audio using openai-whisper"""
+def detect_silence_ffmpeg(audio_path, noise_threshold="-35dB", min_duration=0.5):
+    """Detect silence using FFmpeg silencedetect filter"""
+    cmd = [
+        FFMPEG_PATH, "-i", audio_path,
+        "-af", f"silencedetect=noise={noise_threshold}:d={min_duration}",
+        "-f", "null", "-"
+    ]
     try:
-        import whisper
-        model = whisper.load_model(model_size)
-        result = model.transcribe(audio_path, verbose=False)
-        
-        output = {
-            "text": result["text"],
-            "segments": [],
-            "language": result.get("language", "unknown")
-        }
-        
-        for seg in result["segments"]:
-            output["segments"].append({
-                "id": seg["id"],
-                "start": round(seg["start"], 3),
-                "end": round(seg["end"], 3),
-                "text": seg["text"].strip()
-            })
-        
-        return output
-    except ImportError:
-        return {"error": "openai-whisper not installed. Run: pip3 install openai-whisper"}
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        silences = []
+        pending_start = None
+        for line in result.stderr.split('\n'):
+            if 'silence_start:' in line:
+                try:
+                    pending_start = float(line.split('silence_start:')[1].strip())
+                except:
+                    pass
+            elif 'silence_end:' in line and pending_start is not None:
+                try:
+                    parts = line.split('silence_end:')[1].strip()
+                    end = float(parts.split('|')[0].strip())
+                    duration = end - pending_start
+                    silences.append({
+                        "start": round(pending_start, 3),
+                        "end": round(end, 3),
+                        "duration": round(duration, 3),
+                        "category": "SAFE_CUT" if duration < 2.0 else "REVIEW_CUT"
+                    })
+                    pending_start = None
+                except:
+                    pass
+        return silences, None
     except Exception as e:
-        return {"error": str(e)}
+        return [], str(e)
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print(json.dumps({"error": "Usage: python3 vad_analyzer.py <audio_path> [model_size] [engine]"}))
+def main():
+    parser = argparse.ArgumentParser(description="VAD Analyzer")
+    parser.add_argument("--filePath", required=True, help="Path to audio/video file")
+    parser.add_argument("--minPauseDuration", type=float, default=0.9)
+    parser.add_argument("--paddingBefore", type=float, default=0.25)
+    parser.add_argument("--paddingAfter", type=float, default=0.25)
+    parser.add_argument("--maxCutDuration", type=float, default=3.0)
+    parser.add_argument("--allowLongCuts", type=str, default="false")
+    parser.add_argument("--noiseThreshold", default="-35dB")
+    parser.add_argument("--minSilenceDuration", type=float, default=0.5)
+    
+    args = parser.parse_args()
+    
+    if not os.path.exists(args.filePath):
+        print(json.dumps({"error": f"File not found: {args.filePath}"}))
         sys.exit(1)
     
-    audio_path = sys.argv[1]
-    model_size = sys.argv[2] if len(sys.argv) > 2 else "base"
-    engine = sys.argv[3] if len(sys.argv) > 3 else "faster-whisper"
+    # Detect silence
+    silences, error = detect_silence_ffmpeg(args.filePath, args.noiseThreshold, args.minSilenceDuration)
     
-    if not os.path.exists(audio_path):
-        print(json.dumps({"error": f"File not found: {audio_path}"}))
+    if error:
+        print(json.dumps({"error": f"FFmpeg error: {error}"}))
         sys.exit(1)
     
-    if engine == "faster-whisper":
-        result = transcribe_with_faster_whisper(audio_path, model_size)
-    else:
-        result = transcribe_with_openai_whisper(audio_path, model_size)
+    # Apply padding and filtering
+    cut_candidates = []
+    for s in silences:
+        cut_start = max(0, s["start"] + args.paddingBefore)
+        cut_end = s["end"] - args.paddingAfter
+        cut_duration = cut_end - cut_start
+        
+        if cut_duration > 0 and cut_duration <= args.maxCutDuration:
+            cut_candidates.append({
+                "start": round(cut_start, 3),
+                "end": round(cut_end, 3),
+                "duration": round(cut_duration, 3),
+                "category": "SAFE_CUT" if cut_duration < 2.0 else "REVIEW_CUT",
+                "source": "ffmpeg"
+            })
+    
+    result = {
+        "success": True,
+        "cutCandidates": cut_candidates,
+        "totalSilences": len(silences),
+        "totalCuts": len(cut_candidates),
+        "totalCutDuration": round(sum(c["duration"] for c in cut_candidates), 3),
+        "silenceError": None
+    }
     
     print(json.dumps(result))
+
+if __name__ == "__main__":
+    main()
