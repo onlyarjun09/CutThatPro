@@ -283,7 +283,7 @@ function generatePremiereXml(payload) {
   if (!Array.isArray(cutPlan.autoApplyCuts)) throw { stage: "VALIDATE_INPUT", message: "cutPlan.autoApplyCuts must be an array" };
   if (!sourceClip) throw { stage: "VALIDATE_INPUT", message: "Missing source clip data" };
 
-  const filePath = sourceClip.filePath || sourceClip.mediaPath || sourceClip.sourceMediaPath || sourceClip.path;
+  const filePath = typeof sourceClip === "string" ? sourceClip : (sourceClip.filePath || sourceClip.mediaPath || sourceClip.sourceMediaPath || sourceClip.path);
   if (!filePath) throw { stage: "VALIDATE_INPUT", message: "Missing source media filePath" };
   if (!path.isAbsolute(filePath)) throw { stage: "VALIDATE_INPUT", message: "filePath must be absolute" };
   if (!fs.existsSync(filePath)) throw { stage: "SOURCE_FILE_NOT_FOUND", message: "Source file does not exist", filePath };
