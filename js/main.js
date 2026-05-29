@@ -17,6 +17,7 @@
     currentCutPlan: null,
     lastReviewStatus: "SAFE",
     transcriptData: null,
+    detectedLanguage: null,
     zoomMoments: [],
     brollResults: [],
     selectedBrollIndices: [],
@@ -59,6 +60,8 @@
     dom.videoTrackMode = document.getElementById("video-track-mode");
     dom.audioTrackMode = document.getElementById("audio-track-mode");
     dom.btnExportAudio = document.getElementById("btn-export-audio");
+    dom.btnDetectLanguage = document.getElementById("btn-detect-language");
+    dom.languageResult = document.getElementById("language-result");
     dom.btnAnalyzeSilence = document.getElementById("btn-analyze-silence");
     dom.analyzeProgress = document.getElementById("analyze-progress");
     dom.analyzeProgressBar = document.getElementById("analyze-progress-bar");
@@ -395,11 +398,13 @@
 
     runScriptPromise("duplicateActiveSequenceForCutThat()")
       .then(function (output) {
-        setResult(output);
-        if (output.indexOf("Duplicated active sequence successfully.") === 0) {
-          setStatus("Sequence duplicated");
+        var data = parseJsonResponse(output);
+        if (data && data.success) {
+          setStatus("Sequence duplicated: " + (data.newSequenceName || ""));
+          setResult(output);
         } else {
           setStatus("Duplicate failed");
+          setResult(data ? data.error : output);
         }
       })
       .catch(function (err) {
@@ -437,6 +442,81 @@
       })
       .finally(function () {
         dom.btnExportAudio.disabled = false;
+      });
+  }
+
+  /* ============================================================
+     AUTO CUT — DETECT LANGUAGE
+     ============================================================ */
+  function detectLanguage() {
+    dom.btnDetectLanguage.disabled = true;
+    setStatus("Detecting language...");
+    dom.languageResult.textContent = "Analyzing audio...";
+
+    // Step 1: Get media path from Premiere
+    runScriptPromise("getAudioExportInfo()")
+      .then(function (response) {
+        var info = parseJsonResponse(response);
+        if (!info || info.success === false) {
+          throw new Error(info ? info.error : "Could not get media path. Add clips to timeline.");
+        }
+        if (!info.audioPath) {
+          throw new Error("No media path returned.");
+        }
+
+        // Step 2: Send to backend for language detection
+        return backendPost("/detect-language", {
+          filePath: info.audioPath,
+          modelSize: "base"
+        });
+      })
+      .then(function (result) {
+        if (!result.success) {
+          throw new Error(result.error || "Language detection failed");
+        }
+
+        var lang = result.language || "unknown";
+        var langName = result.languageName || lang;
+        var prob = result.probability ? (result.probability * 100).toFixed(1) : "?";
+
+        // Display result
+        var output = "Language: " + langName + " (" + lang + ")\n";
+        output += "Confidence: " + prob + "%\n";
+        if (result.duration) output += "Analyzed: " + result.duration.toFixed(1) + "s of audio\n";
+        if (result.sampleSegments && result.sampleSegments.length > 0) {
+          output += "\nSample text:\n";
+          result.sampleSegments.forEach(function (seg) {
+            output += "  " + seg.text + "\n";
+          });
+        }
+
+        dom.languageResult.textContent = output;
+        setStatus("Language detected: " + langName);
+
+        // Auto-update the caption language dropdown if available
+        if (dom.captionLanguage) {
+          var options = dom.captionLanguage.options;
+          for (var i = 0; i < options.length; i++) {
+            if (options[i].value === lang) {
+              dom.captionLanguage.selectedIndex = i;
+              break;
+            }
+          }
+        }
+
+        // Also store in state for later use
+        state.detectedLanguage = {
+          code: lang,
+          name: langName,
+          probability: result.probability
+        };
+      })
+      .catch(function (err) {
+        dom.languageResult.textContent = "";
+        setStatus("Language detection failed: " + String(err.message || err));
+      })
+      .finally(function () {
+        dom.btnDetectLanguage.disabled = false;
       });
   }
 
@@ -528,6 +608,7 @@
         summary += "Total segments: " + cuts.length + "\n";
         summary += "Auto-apply cuts: " + state.currentCutPlan.autoApplyCuts.length + "\n";
         summary += "Review-only: " + state.currentCutPlan.reviewOnlyCuts.length + "\n";
+        if (result.language) summary += "Language: " + result.language + "\n";
         if (result.duration) summary += "Duration: " + result.duration.toFixed(1) + "s\n";
         if (result.totalCutDuration) summary += "Total cut: " + result.totalCutDuration.toFixed(1) + "s\n";
         if (result.reductionPercent) summary += "Reduction: " + result.reductionPercent.toFixed(1) + "%\n";
@@ -602,50 +683,29 @@
   }
 
   /* ============================================================
-     AUTO CUT — APPLY CLEAN CUT (XML pipeline)
+     AUTO CUT — APPLY CLEAN CUT (razor + ripple delete)
      ============================================================ */
   function applyCleanCut() {
     if (!state.currentCutPlan || !state.currentCutPlan.autoApplyCuts.length) return;
 
     dom.btnApplyCleanCut.disabled = true;
     setStatus("Applying clean cut...");
-    setResult("Preparing sequence info...");
+    setResult("Applying razor cuts & removing silences...");
 
-    // Step 1: Get sequence info from Premiere
-    runScriptPromise("getSequenceInfoForCleanCut()")
-      .then(function (response) {
-        var seqInfo = parseJsonResponse(response);
-        if (!seqInfo || !seqInfo.success) {
-          throw new Error(seqInfo ? seqInfo.error : "Could not get sequence info");
-        }
-
-        setResult("Generating clean XML...");
-
-        // Step 2: Generate XML from backend
-        return backendPost("/generate-xml", {
-          cutPlan: state.currentCutPlan,
-          sourceClip: seqInfo.sourceClip,
-          sequenceInfo: seqInfo.sequenceInfo
-        });
-      })
-      .then(function (xmlResult) {
-        if (!xmlResult.success) {
-          throw new Error(xmlResult.error || "XML generation failed");
-        }
-
-        setResult("Importing clean sequence into Premiere...");
-
-        // Step 3: Import XML into Premiere
-        return runScriptPromise('importSequenceXML("' + xmlResult.xmlPath.replace(/\\/g, "\\\\") + '")');
-      })
-      .then(function (importResponse) {
-        var importData = parseJsonResponse(importResponse);
-        if (importData && importData.success) {
+    // Use same encoding as addRazorCuts (encodeURIComponent)
+    var cutsForRazor = state.currentCutPlan.autoApplyCuts.map(function(c) {
+      return { start: c.start, end: c.end };
+    });
+    var encoded = encodeURIComponent(JSON.stringify(cutsForRazor));
+    runScriptPromise('applyCleanCutDirect("' + encoded + '")')
+      .then(function (cutResponse) {
+        var cutData = parseJsonResponse(cutResponse);
+        if (cutData && cutData.success) {
           setStatus("Clean cut applied!");
-          setResult("Clean sequence: " + (importData.sequenceName || "imported"));
+          setResult("Removed " + (cutData.clipsRemoved || 0) + " silence clips from " + (cutData.cutsApplied || 0) + " cuts\nDebug: " + (cutData.debug || "none"));
         } else {
-          setStatus("Import issue");
-          setResult(importResponse);
+          setStatus("Cut issue");
+          setResult(cutResponse);
         }
       })
       .catch(function (err) {
@@ -762,7 +822,16 @@
     dom.btnAddCaptionTrack.disabled = true;
     setStatus(dom.captionStatus, "Adding captions to timeline...");
 
-    var encoded = encodeURIComponent(JSON.stringify(state.transcriptData.segments));
+    // Convert segments to SRT text before sending to host.jsx
+    var srtText = "";
+    state.transcriptData.segments.forEach(function (seg, i) {
+      var start = formatTime(seg.start);
+      var end = formatTime(seg.end);
+      var text = (seg.text || "").trim();
+      srtText += (i + 1) + "\n" + start + " --> " + end + "\n" + text + "\n\n";
+    });
+
+    var encoded = encodeURIComponent(srtText);
 
     runScriptPromise('addCaptionTrackToTimeline("' + encoded + '")')
       .then(function (response) {
@@ -1062,6 +1131,7 @@
     dom.btnTestConnection.addEventListener("click", testConnection);
     dom.btnDuplicateSeq.addEventListener("click", duplicateSequence);
     dom.btnExportAudio.addEventListener("click", exportAudio);
+    dom.btnDetectLanguage.addEventListener("click", detectLanguage);
     dom.btnAnalyzeSilence.addEventListener("click", analyzeSilence);
     dom.btnAddMarkers.addEventListener("click", addMarkers);
     dom.btnAddRazorCuts.addEventListener("click", addRazorCuts);

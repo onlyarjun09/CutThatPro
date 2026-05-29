@@ -8,6 +8,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const { spawn } = require("child_process");
+const fetch = require("node-fetch");
 
 const app = express();
 const PORT = 3456;
@@ -614,17 +615,45 @@ app.post("/transcribe", async (req, res) => {
     const payload = {
       filePath: req.body.filePath || "",
       language: req.body.language || "en",
-      model: req.body.model || "small"
+      modelSize: req.body.model || "small"
     };
 
     if (!payload.filePath) return res.status(400).json({ success: false, error: "missing filePath" });
     if (!fs.existsSync(payload.filePath)) return res.status(400).json({ success: false, error: "file does not exist" });
 
-    const result = await runPythonAnalyzer("vad_analyzer.py", {
+    const result = await runPythonAnalyzer("whisper_vad_analyzer.py", {
       ...payload,
-      mode: "transcribe"
+      // Disable silence detection features — only transcribe
+      minPauseDuration: 999,
+      minSilenceDuration: 999
     });
 
+    // Return transcription results
+    return res.json({
+      success: true,
+      segments: result.cutCandidates ? [] : (result.segments || []),
+      text: result.text || "",
+      language: result.language || "unknown",
+      duration: result.duration || 0
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Language Detection
+app.post("/detect-language", async (req, res) => {
+  try {
+    const payload = {
+      filePath: req.body.filePath || "",
+      modelSize: req.body.modelSize || "base",
+      maxDuration: req.body.maxDuration || 30
+    };
+
+    if (!payload.filePath) return res.status(400).json({ success: false, error: "missing filePath" });
+    if (!fs.existsSync(payload.filePath)) return res.status(400).json({ success: false, error: "file does not exist" });
+
+    const result = await runPythonAnalyzer("language_detector.py", payload);
     return res.json(result);
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
@@ -687,7 +716,6 @@ app.post("/search-broll", async (req, res) => {
     const query = keywords.join(",");
     const url = `https://api.pexels.com/videos/search?query=${encodeURIComponent(query)}&per_page=${maxResults}&orientation=${orientation}`;
 
-    const fetch = (await import("node-fetch")).default;
     const response = await fetch(url, {
       headers: { Authorization: apiKey }
     });
@@ -724,7 +752,6 @@ app.post("/download-broll", async (req, res) => {
     const videos = req.body.videos || [];
     if (videos.length === 0) return res.status(400).json({ success: false, error: "No videos provided" });
 
-    const fetch = (await import("node-fetch")).default;
     const filePaths = [];
 
     for (let i = 0; i < videos.length; i++) {

@@ -5,6 +5,13 @@
  */
 
 /* ============================================================
+   HOST PING (used by loadJSX to verify host loaded)
+   ============================================================ */
+function cutThatHostPing() {
+    return "PING_OK";
+}
+
+/* ============================================================
    TEST CONNECTION
    ============================================================ */
 function testPremiereConnection() {
@@ -376,13 +383,16 @@ function addCaptionTrackToTimeline(srtContent) {
         if (typeof app === "undefined" || !app || !app.project) {
             return JSON.stringify({ success: false, error: "No project" });
         }
+        // Decode URI-encoded content from main.js
+        var decodedSrt = srtContent;
+        try { decodedSrt = decodeURIComponent(srtContent); } catch(de) {}
         // Write SRT to temp file and import
         var tempPath = Folder.myDocuments.fsName + "/CutThatPro/temp/captions.srt";
         var tempFolder = new Folder(Folder.myDocuments.fsName + "/CutThatPro/temp");
         if (!tempFolder.exists) { tempFolder.create(); }
         var srtFile = new File(tempPath);
         srtFile.open("w");
-        srtFile.write(srtContent);
+        srtFile.write(decodedSrt);
         srtFile.close();
         // Import the SRT file
         var importResult = app.project.importFiles([tempPath], false, app.project.rootItem, false);
@@ -418,16 +428,149 @@ function applyZoomKeyframes(zoomJSON) {
    IMPORT SEQUENCE XML
    ============================================================ */
 function importSequenceXML(xmlPath) {
+    // UNUSED — kept for backward compat, redirect to clean cut
+    return JSON.stringify({ success: false, error: "Use applyCleanCutDirect instead" });
+}
+
+/* ============================================================
+   APPLY CLEAN CUT DIRECT (razor + ripple delete via QE API)
+   ============================================================ */
+function applyCleanCutDirect(cutsJSON) {
     try {
         if (typeof app === "undefined" || !app || !app.project) {
             return JSON.stringify({ success: false, error: "No project" });
         }
-        var xmlFile = new File(xmlPath);
-        if (!xmlFile.exists) {
-            return JSON.stringify({ success: false, error: "XML file not found: " + xmlPath });
+
+        var cuts;
+        try {
+            var decoded = decodeURIComponent(cutsJSON);
+            cuts = JSON.parse(decoded);
+        } catch (e) {
+            try { cuts = JSON.parse(cutsJSON); } catch (e2) {
+                return JSON.stringify({ success: false, error: "Invalid JSON: " + e2.toString() });
+            }
         }
-        app.project.importSequences(xmlPath);
-        return JSON.stringify({ success: true, path: xmlPath });
+        if (!cuts || !cuts.length || cuts.length === 0) {
+            return JSON.stringify({ success: false, error: "No cuts" });
+        }
+
+        var seq = app.project.activeSequence;
+        if (!seq) {
+            return JSON.stringify({ success: false, error: "No active sequence" });
+        }
+
+        // Enable QE API for razor cuts
+        app.enableQE();
+        if (typeof qe === "undefined" || !qe.project) {
+            return JSON.stringify({ success: false, error: "QE API not available" });
+        }
+        var qeSeq = qe.project.getActiveSequence();
+        if (!qeSeq) {
+            return JSON.stringify({ success: false, error: "No QE sequence" });
+        }
+
+        // Sort cuts by start time DESCENDING (work end-to-start to avoid timecode shifts)
+        cuts.sort(function(a, b) { return b.start - a.start; });
+
+        var debugInfo = [];
+        var totalRazored = 0;
+        var totalRemoved = 0;
+
+        // Process each silence cut
+        for (var i = 0; i < cuts.length; i++) {
+            var cut = cuts[i];
+            var cutStart = cut.start;
+            var cutEnd = cut.end;
+
+            try {
+                // Step 1: Razor at boundaries
+                qeSeq.razor(cutStart);
+                qeSeq.razor(cutEnd);
+                totalRazored++;
+            } catch (razorErr) {
+                debugInfo.push("razor_err:" + razorErr.toString());
+            }
+        }
+
+        // After ALL razor cuts, sync and find silence clips
+        // Refresh the sequence reference
+        var vClipCount = 0;
+        try { vClipCount = seq.videoTracks[0].clips.numItems; } catch(e) {}
+
+        debugInfo.push("vClipsAfterRazor:" + vClipCount);
+        debugInfo.push("cutsLen:" + cuts.length);
+
+        // List first few clips for debugging
+        if (vClipCount > 0 && vClipCount < 500) {
+            for (var d = 0; d < Math.min(vClipCount, 5); d++) {
+                try {
+                    var dc = seq.videoTracks[0].clips[d];
+                    debugInfo.push("clip" + d + ":" + dc.start.seconds.toFixed(3) + "-" + dc.end.seconds.toFixed(3));
+                } catch(de) {}
+            }
+            // Also show a silence range for comparison
+            if (cuts.length > 0) {
+                debugInfo.push("cut0:" + cuts[0].start.toFixed(3) + "-" + cuts[0].end.toFixed(3));
+            }
+        }
+
+        // Now try to remove silence clips - iterate reverse
+        for (var vt = 0; vt < seq.videoTracks.numTracks; vt++) {
+            var vTrack = seq.videoTracks[vt];
+            for (var ci = vTrack.clips.numItems - 1; ci >= 0; ci--) {
+                var clip = vTrack.clips[ci];
+                var cs = clip.start.seconds;
+                var ce = clip.end.seconds;
+                for (var k = 0; k < cuts.length; k++) {
+                    if (cs >= cuts[k].start - 0.1 && ce <= cuts[k].end + 0.1) {
+                        try {
+                            clip.remove(true);
+                            totalRemoved++;
+                        } catch (rmErr) {
+                            debugInfo.push("rmErr:" + rmErr.toString());
+                            // Try without ripple
+                            try {
+                                clip.remove(false);
+                                totalRemoved++;
+                            } catch (rmErr2) {
+                                debugInfo.push("rmErr2:" + rmErr2.toString());
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        for (var at = 0; at < seq.audioTracks.numTracks; at++) {
+            var aTrack = seq.audioTracks[at];
+            for (var ci2 = aTrack.clips.numItems - 1; ci2 >= 0; ci2--) {
+                var aClip = aTrack.clips[ci2];
+                var acs = aClip.start.seconds;
+                var ace = aClip.end.seconds;
+                for (var k2 = 0; k2 < cuts.length; k2++) {
+                    if (acs >= cuts[k2].start - 0.1 && ace <= cuts[k2].end + 0.1) {
+                        try {
+                            aClip.remove(true);
+                            totalRemoved++;
+                        } catch (armErr) {
+                            try {
+                                aClip.remove(false);
+                                totalRemoved++;
+                            } catch (armErr2) {}
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        return JSON.stringify({
+            success: true,
+            cutsApplied: totalRazored,
+            clipsRemoved: totalRemoved,
+            debug: debugInfo.join("; ")
+        });
     } catch (err) {
         return JSON.stringify({ success: false, error: err.toString() });
     }

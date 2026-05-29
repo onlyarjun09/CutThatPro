@@ -206,6 +206,7 @@ def main():
         result = {
             "success": True,
             "cutCandidates": all_cuts,
+            "segments": segments if segments else [],
             "totalSilences": len(silences),
             "totalTranscriptGaps": len(transcript_gaps),
             "totalCuts": len(all_cuts),

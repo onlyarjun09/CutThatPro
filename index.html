@@ -106,7 +106,11 @@
       <div class="panel-section">
         <h2>Analyze</h2>
         <div class="button-row">
-          <button id="btn-export-audio" class="btn btn-primary">Export Audio</button>
+          <button id="btn-export-audio" class="btn btn-secondary">Export Audio</button>
+          <button id="btn-detect-language" class="btn btn-secondary">Detect Language</button>
+        </div>
+        <div id="language-result" class="info-box"></div>
+        <div class="button-row">
           <button id="btn-analyze-silence" class="btn btn-primary">Analyze Silence</button>
         </div>
         <div class="progress-bar-container" id="analyze-progress" style="display:none;">
@@ -138,6 +142,8 @@
           <label for="caption-language">Language</label>
           <select id="caption-language">
             <option value="en">English</option>
+            <option value="hi">Hindi</option>
+            <option value="mr">Marathi</option>
             <option value="es">Spanish</option>
             <option value="fr">French</option>
             <option value="de">German</option>
