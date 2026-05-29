@@ -196,6 +196,19 @@ function runPythonAnalyzer(scriptName, payload) {
    XML GENERATION — KEEP RANGES
    ============================================================ */
 function buildKeepRanges(cutPlan, sourceClip) {
+  // Handle string sourceClip (just a file path)
+  if (typeof sourceClip === "string") {
+    // Use cut plan to determine duration
+    const autoCuts = Array.isArray(cutPlan && cutPlan.autoApplyCuts) ? cutPlan.autoApplyCuts : [];
+    let maxEnd = 0;
+    for (let i = 0; i < autoCuts.length; i += 1) {
+      const e = toNumber(autoCuts[i] && autoCuts[i].end, 0);
+      if (e > maxEnd) maxEnd = e;
+    }
+    // Add some buffer after last cut
+    sourceClip = { sourceIn: 0, sourceOut: maxEnd + 10 };
+  }
+
   const sourceStart = toNumber(sourceClip.sourceIn, 0);
   const sourceEnd = sourceClip.sourceOut !== undefined && sourceClip.sourceOut !== null
     ? toNumber(sourceClip.sourceOut, sourceStart)
