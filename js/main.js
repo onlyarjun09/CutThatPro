@@ -415,23 +415,24 @@
      AUTO CUT — EXPORT AUDIO
      ============================================================ */
   function exportAudio() {
+    // New approach: Just get the source file path — no Media Encoder
     dom.btnExportAudio.disabled = true;
-    setStatus("Exporting audio from active sequence...");
+    setStatus("Getting media path from timeline...");
     setResult("");
 
-    runScriptPromise("exportActiveSequenceAudioForCutThat()")
+    runScriptPromise("getAudioExportInfo()")
       .then(function (response) {
         var data = parseJsonResponse(response);
         if (data && data.success) {
-          setStatus("Audio export started (job: " + data.jobId + ")");
-          setResult("Audio: " + data.audioPath + "\nSequence: " + data.sequenceName);
+          setStatus("Media found: " + (data.filePath || data.audioPath));
+          setResult("Sequence: " + data.sequenceName + "\nFile: " + (data.filePath || data.audioPath));
         } else {
-          setStatus("Audio export failed");
-          setResult(data ? (data.error + "\n" + (data.details || "")) : response);
+          setStatus("No media found");
+          setResult(data ? data.error : response);
         }
       })
       .catch(function (err) {
-        setStatus("Audio export failed");
+        setStatus("Failed to get media path");
         setResult(String(err.message || err));
       })
       .finally(function () {

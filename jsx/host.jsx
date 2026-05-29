@@ -51,14 +51,10 @@ function testPremiereConnection() {
 function exportActiveSequenceAudioForCutThat() {
     var result = {
         success: false,
-        status: "",
-        jobId: "",
-        audioPath: "",
+        filePath: "",
         sequenceName: "",
         error: "",
-        details: "",
-        presetPath: "",
-        outputPath: ""
+        details: ""
     };
 
     try {
@@ -75,79 +71,68 @@ function exportActiveSequenceAudioForCutThat() {
 
         result.sequenceName = seq.name ? String(seq.name) : "Unknown Sequence";
 
-        var tempFolderPath = Folder.myDocuments.fsName + "/CutThatPro/temp";
-        var tempFolder = new Folder(tempFolderPath);
-        if (!tempFolder.exists) {
-            var created = tempFolder.create();
-            if (!created) {
-                result.error = "Could not create temp folder";
-                result.details = tempFolderPath;
+        // Get source media file path from the first clip in the sequence
+        // No Media Encoder needed — backend will use FFmpeg directly
+        var filePath = "";
+        
+        try {
+            // Try video tracks first
+            var videoTracks = seq.videoTracks;
+            if (videoTracks && videoTracks.numTracks > 0) {
+                var vTrack = videoTracks[0];
+                if (vTrack && vTrack.clips && vTrack.clips.numItems > 0) {
+                    var clip = vTrack.clips[0];
+                    if (clip && clip.projectItem) {
+                        filePath = clip.projectItem.getMediaPath ? String(clip.projectItem.getMediaPath()) : "";
+                    }
+                }
+            }
+        } catch (e) {
+            // Fallback: try audio tracks
+        }
+
+        if (!filePath) {
+            try {
+                var audioTracks = seq.audioTracks;
+                if (audioTracks && audioTracks.numTracks > 0) {
+                    var aTrack = audioTracks[0];
+                    if (aTrack && aTrack.clips && aTrack.clips.numItems > 0) {
+                        var aClip = aTrack.clips[0];
+                        if (aClip && aClip.projectItem) {
+                            filePath = aClip.projectItem.getMediaPath ? String(aClip.projectItem.getMediaPath()) : "";
+                        }
+                    }
+                }
+            } catch (e2) {
+                result.error = "Could not get media path from sequence";
+                result.details = e2.toString();
                 return JSON.stringify(result);
             }
         }
 
-        var presetPath = Folder.myDocuments.fsName + "/CutThatPro/presets/CutThatPro_AudioOnly_WAV.epr";
-        var outputPath = tempFolderPath + "/cutthatpro_active_sequence_audio.wav";
-
-        result.presetPath = presetPath;
-        result.outputPath = outputPath;
-
-        var presetFile = new File(presetPath);
-        if (!presetFile.exists) {
-            result.error = "Export preset not found";
-            result.details = "Expected at: " + presetPath;
+        if (!filePath) {
+            result.error = "No media files found in sequence";
+            result.details = "Add video/audio clips to the timeline first";
             return JSON.stringify(result);
         }
 
-        if (!app.encoder) {
-            result.error = "encodeSequence failed";
-            result.details = "app.encoder is not available in this Premiere build.";
-            return JSON.stringify(result);
-        }
-
-        try {
-            app.encoder.launchEncoder();
-        } catch (launchErr) {
-            result.error = "encodeSequence failed";
-            result.details = "launchEncoder failed: " + launchErr.toString();
-            return JSON.stringify(result);
-        }
-
-        var removeOnCompletion = 0;
-        var workAreaEntireSequence = 1;
-        var jobId;
-
-        try {
-            jobId = app.encoder.encodeSequence(seq, outputPath, presetPath, workAreaEntireSequence, removeOnCompletion);
-        } catch (encodeErr) {
-            result.error = "encodeSequence failed";
-            result.details = encodeErr.toString();
-            return JSON.stringify(result);
-        }
-
-        if (jobId === undefined || jobId === null || jobId === "" || jobId === 0 || jobId === "0" || jobId === -1 || jobId === "-1") {
-            result.error = "encodeSequence failed";
-            result.details = "Invalid job ID returned: " + jobId;
-            return JSON.stringify(result);
-        }
-
-        try {
-            app.encoder.startBatch();
-        } catch (batchErr) {
-            result.error = "encodeSequence failed";
-            result.details = "startBatch failed: " + batchErr.toString();
+        // Verify file exists
+        var mediaFile = new File(filePath);
+        if (!mediaFile.exists) {
+            result.error = "Media file not found: " + filePath;
             return JSON.stringify(result);
         }
 
         result.success = true;
-        result.status = "export_started";
-        result.jobId = String(jobId);
-        result.audioPath = outputPath;
-        result.sequenceName = seq.name ? String(seq.name) : result.sequenceName;
+        result.filePath = filePath;
         return JSON.stringify(result);
+
     } catch (err) {
-        result.error = "encodeSequence failed";
+        result.error = "Failed to get media path";
         result.details = err.toString();
+        return JSON.stringify(result);
+    }
+}
         return JSON.stringify(result);
     }
 }
@@ -166,23 +151,52 @@ function getAudioExportInfo() {
             return JSON.stringify({ success: false, error: "No active sequence found" });
         }
 
-        var audioPath = Folder.myDocuments.fsName + "/CutThatPro/temp/cutthatpro_active_sequence_audio.wav";
         var sequenceName = seq.name ? String(seq.name) : "Unknown";
 
-        // Check if the audio file actually exists
-        var audioFile = new File(audioPath);
-        if (!audioFile.exists) {
-            return JSON.stringify({ 
-                success: false, 
-                error: "Audio file not found. Click 'Export Audio' first.",
-                audioPath: audioPath,
-                sequenceName: sequenceName
-            });
+        // Get source media file path directly — no export needed
+        var filePath = "";
+        
+        try {
+            var videoTracks = seq.videoTracks;
+            if (videoTracks && videoTracks.numTracks > 0) {
+                var vTrack = videoTracks[0];
+                if (vTrack && vTrack.clips && vTrack.clips.numItems > 0) {
+                    var clip = vTrack.clips[0];
+                    if (clip && clip.projectItem) {
+                        filePath = clip.projectItem.getMediaPath ? String(clip.projectItem.getMediaPath()) : "";
+                    }
+                }
+            }
+        } catch (e) {}
+
+        if (!filePath) {
+            try {
+                var audioTracks = seq.audioTracks;
+                if (audioTracks && audioTracks.numTracks > 0) {
+                    var aTrack = audioTracks[0];
+                    if (aTrack && aTrack.clips && aTrack.clips.numItems > 0) {
+                        var aClip = aTrack.clips[0];
+                        if (aClip && aClip.projectItem) {
+                            filePath = aClip.projectItem.getMediaPath ? String(aClip.projectItem.getMediaPath()) : "";
+                        }
+                    }
+                }
+            } catch (e2) {}
+        }
+
+        if (!filePath) {
+            return JSON.stringify({ success: false, error: "No media found in timeline. Add clips first." });
+        }
+
+        var mediaFile = new File(filePath);
+        if (!mediaFile.exists) {
+            return JSON.stringify({ success: false, error: "File not found: " + filePath });
         }
 
         return JSON.stringify({
             success: true,
-            audioPath: audioPath,
+            filePath: filePath,
+            audioPath: filePath,  // backward compat
             sequenceName: sequenceName
         });
     } catch (err) {
