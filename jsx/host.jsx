@@ -317,8 +317,13 @@ function addRazorCutsToTimeline(cutsJSON) {
             return JSON.stringify({ success: false, error: "No project" });
         }
         var cuts;
-        try { cuts = JSON.parse(cutsJSON); } catch (e) {
-            return JSON.stringify({ success: false, error: "Invalid JSON" });
+        try {
+            var raw = decodeURIComponent(cutsJSON);
+            cuts = JSON.parse(raw);
+        } catch (e) {
+            try { cuts = JSON.parse(cutsJSON); } catch (e2) {
+                return JSON.stringify({ success: false, error: "Invalid JSON" });
+            }
         }
         if (!cuts || cuts.length === 0) {
             return JSON.stringify({ success: false, error: "No cuts" });
@@ -331,8 +336,10 @@ function addRazorCutsToTimeline(cutsJSON) {
         var cutsAdded = 0;
         for (var i = 0; i < cuts.length; i++) {
             try {
-                qeSeq.razor(cuts[i].start);
-                qeSeq.razor(cuts[i].end);
+                var s = parseFloat(cuts[i].start);
+                var e = parseFloat(cuts[i].end);
+                qeSeq.razor(s);
+                qeSeq.razor(e);
                 cutsAdded++;
             } catch (razorErr) {}
         }
@@ -351,8 +358,13 @@ function addSilenceMarkersToTimeline(cutsJSON) {
             return JSON.stringify({ success: false, error: "No project" });
         }
         var cuts;
-        try { cuts = JSON.parse(cutsJSON); } catch (e) {
-            return JSON.stringify({ success: false, error: "Invalid JSON" });
+        try {
+            var raw = decodeURIComponent(cutsJSON);
+            cuts = JSON.parse(raw);
+        } catch (e) {
+            try { cuts = JSON.parse(cutsJSON); } catch (e2) {
+                return JSON.stringify({ success: false, error: "Invalid JSON" });
+            }
         }
         var seq = app.project.activeSequence;
         if (!seq) {
@@ -441,10 +453,16 @@ function applyCleanCutDirect(cutsJSON) {
             return JSON.stringify({ success: false, error: "No project" });
         }
 
-        // EXACT same parsing as addRazorCutsToTimeline
+        // Decode URI-encoded JSON from main.js
         var cuts;
-        try { cuts = JSON.parse(cutsJSON); } catch (e) {
-            return JSON.stringify({ success: false, error: "Invalid JSON: " + e.toString() });
+        try {
+            var raw = decodeURIComponent(cutsJSON);
+            cuts = JSON.parse(raw);
+        } catch (e) {
+            // Fallback: maybe already decoded
+            try { cuts = JSON.parse(cutsJSON); } catch (e2) {
+                return JSON.stringify({ success: false, error: "Invalid JSON: " + e.toString() });
+            }
         }
         if (!cuts || cuts.length === 0) {
             return JSON.stringify({ success: false, error: "No cuts" });
@@ -468,11 +486,13 @@ function applyCleanCutDirect(cutsJSON) {
         var debugInfo = [];
         var totalRazored = 0;
 
-        // Step 1: Razor at all boundaries — EXACT same call as addRazorCutsToTimeline
+        // Step 1: Razor at all boundaries
         for (var i = 0; i < cuts.length; i++) {
             try {
-                qeSeq.razor(cuts[i].start);
-                qeSeq.razor(cuts[i].end);
+                var s = parseFloat(cuts[i].start);
+                var e = parseFloat(cuts[i].end);
+                qeSeq.razor(s);
+                qeSeq.razor(e);
                 totalRazored++;
             } catch (razorErr) {
                 debugInfo.push("razor_err:" + razorErr.toString());
