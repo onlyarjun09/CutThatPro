@@ -169,6 +169,17 @@ function getAudioExportInfo() {
         var audioPath = Folder.myDocuments.fsName + "/CutThatPro/temp/cutthatpro_active_sequence_audio.wav";
         var sequenceName = seq.name ? String(seq.name) : "Unknown";
 
+        // Check if the audio file actually exists
+        var audioFile = new File(audioPath);
+        if (!audioFile.exists) {
+            return JSON.stringify({ 
+                success: false, 
+                error: "Audio file not found. Click 'Export Audio' first.",
+                audioPath: audioPath,
+                sequenceName: sequenceName
+            });
+        }
+
         return JSON.stringify({
             success: true,
             audioPath: audioPath,

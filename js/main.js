@@ -454,8 +454,11 @@
     runScriptPromise("getAudioExportInfo()")
       .then(function (response) {
         var info = parseJsonResponse(response);
-        if (!info || !info.audioPath) {
-          throw new Error("Could not get audio path from Premiere. Export audio first.");
+        if (!info || info.success === false) {
+          throw new Error(info ? info.error : "Could not get audio path. Export audio first.");
+        }
+        if (!info.audioPath) {
+          throw new Error("No audio path returned. Export audio first.");
         }
 
         // Step 2: Send to backend for analysis
