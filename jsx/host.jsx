@@ -5,6 +5,13 @@
  */
 
 /* ============================================================
+   HELPER: Convert seconds to Premiere ticks
+   ============================================================ */
+function secondsToTicks(sec) {
+    return String(Math.round(parseFloat(sec) * 254016000000));
+}
+
+/* ============================================================
    TEST RAZOR CUT — diagnostic: tries different time formats
    ============================================================ */
 function testRazorCut() {
@@ -403,10 +410,8 @@ function addRazorCutsToTimeline(cutsJSON) {
         var cutsAdded = 0;
         for (var i = 0; i < cuts.length; i++) {
             try {
-                var s = parseFloat(cuts[i].start);
-                var e = parseFloat(cuts[i].end);
-                qeSeq.razor(s);
-                qeSeq.razor(e);
+                qeSeq.razor(secondsToTicks(cuts[i].start));
+                qeSeq.razor(secondsToTicks(cuts[i].end));
                 cutsAdded++;
             } catch (razorErr) {}
         }
@@ -556,10 +561,8 @@ function applyCleanCutDirect(cutsJSON) {
         // Step 1: Razor at all boundaries
         for (var i = 0; i < cuts.length; i++) {
             try {
-                var s = parseFloat(cuts[i].start);
-                var e = parseFloat(cuts[i].end);
-                qeSeq.razor(s);
-                qeSeq.razor(e);
+                qeSeq.razor(secondsToTicks(cuts[i].start));
+                qeSeq.razor(secondsToTicks(cuts[i].end));
                 totalRazored++;
             } catch (razorErr) {
                 debugInfo.push("razor_err:" + razorErr.toString());
