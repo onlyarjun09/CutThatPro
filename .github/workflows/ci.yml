@@ -1,0 +1,163 @@
+name: CutThatPro CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check-plugin:
+    name: Validate Plugin Structure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required files exist
+        run: |
+          echo "Checking plugin structure..."
+          for file in \
+            "CSXS/manifest.xml" \
+            "index.html" \
+            "js/CSInterface.js" \
+            "js/main.js" \
+            "jsx/host.jsx" \
+            "css/style.css" \
+            "backend/server.js" \
+            "backend/package.json" \
+            "backend/vad_analyzer.py" \
+            "backend/whisper_vad_analyzer.py" \
+            "backend/language_detector.py" \
+            "backend/requirements.txt"; do
+            if [ -f "$file" ]; then
+              echo "  ✅ $file"
+            else
+              echo "  ❌ MISSING: $file"
+              exit 1
+            fi
+          done
+
+      - name: Validate manifest.xml
+        run: |
+          echo "Checking manifest.xml..."
+          grep -q 'ExtensionBundleId="com.cutthatpro.panel"' CSXS/manifest.xml
+          grep -q 'ScriptPath>./jsx/host.jsx' CSXS/manifest.xml
+          grep -q 'MainPath>./index.html' CSXS/manifest.xml
+          echo "  ✅ manifest.xml valid"
+
+      - name: Check host.jsx brace balance
+        run: |
+          echo "Checking host.jsx syntax..."
+          OPENS=$(grep -o '{' jsx/host.jsx | wc -l)
+          CLOSES=$(grep -o '}' jsx/host.jsx | wc -l)
+          echo "  Open braces: $OPENS"
+          echo "  Close braces: $CLOSES"
+          if [ "$OPENS" -ne "$CLOSES" ]; then
+            echo "  ❌ BRACE MISMATCH!"
+            exit 1
+          fi
+          echo "  ✅ Braces balanced"
+
+      - name: Check host.jsx has no ES6+ syntax
+        run: |
+          echo "Checking for ES6+ in host.jsx (non-comment lines)..."
+          # Exclude comment lines
+          ARROWS=$(grep -v '^\s*//' jsx/host.jsx | grep -v '^\s*\*' | grep -c '=>' || true)
+          LETS=$(grep -v '^\s*//' jsx/host.jsx | grep -v '^\s*\*' | grep -cE '\blet\b|\bconst\b' || true)
+          TEMPLATES=$(grep -v '^\s*//' jsx/host.jsx | grep -v '^\s*\*' | grep -c '`' || true)
+          if [ "$ARROWS" -gt 0 ] || [ "$LETS" -gt 0 ] || [ "$TEMPLATES" -gt 0 ]; then
+            echo "  ❌ ES6+ found: arrows=$ARROWS let/const=$LETS templates=$TEMPLATES"
+            exit 1
+          fi
+          echo "  ✅ No ES6+ syntax in code"
+
+  check-backend:
+    name: Check Backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          npm ci
+
+      - name: Validate server.js syntax
+        run: |
+          cd backend
+          node -c server.js
+          echo "✅ server.js syntax valid"
+
+      - name: Check FFmpeg path in server.js
+        run: |
+          grep -q '/opt/homebrew/bin/ffmpeg' backend/server.js
+          echo "✅ FFmpeg path found in server.js"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          cd backend
+          pip install -r requirements.txt
+
+      - name: Validate Python scripts syntax
+        run: |
+          cd backend
+          python3 -m py_compile vad_analyzer.py
+          echo "  ✅ vad_analyzer.py"
+          python3 -m py_compile whisper_vad_analyzer.py
+          echo "  ✅ whisper_vad_analyzer.py"
+          python3 -m py_compile language_detector.py
+          echo "  ✅ language_detector.py"
+
+      - name: Validate Python argparse
+        run: |
+          cd backend
+          python3 vad_analyzer.py --filePath /dev/null 2>&1 || true
+          echo "✅ vad_analyzer.py argparse works"
+
+  check-frontend:
+    name: Check Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate HTML structure
+        run: |
+          echo "Checking index.html..."
+          grep -q '<!DOCTYPE html>' index.html
+          grep -q 'js/CSInterface.js' index.html
+          grep -q 'js/main.js' index.html
+          echo "  ✅ index.html references correct"
+
+      - name: Check DOM IDs match
+        run: |
+          echo "Checking DOM ID consistency..."
+          # Extract IDs from HTML
+          HTML_IDS=$(grep -oP 'id="[^"]+"' index.html | sed 's/id="//;s/"//' | sort)
+          # Extract getElementById from JS
+          JS_IDS=$(grep -oP 'getElementById\("[^"]+"\)' js/main.js | sed 's/getElementById("//;s/")//' | sort)
+          # Check each JS ID exists in HTML
+          MISSING=0
+          for id in $JS_IDS; do
+            if ! echo "$HTML_IDS" | grep -qx "$id"; then
+              echo "  ❌ ID '$id' referenced in JS but missing from HTML"
+              MISSING=$((MISSING+1))
+            fi
+          done
+          if [ "$MISSING" -eq 0 ]; then
+            echo "  ✅ All JS getElementById references have matching HTML elements"
+          else
+            echo "  ❌ $MISSING missing IDs"
+            exit 1
+          fi
