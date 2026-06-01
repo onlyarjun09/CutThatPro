@@ -25,11 +25,132 @@ function getTimeSeconds(timeObj) {
     return 0;
 }
 
-function isClipInsideRange(clip, rangeStart, rangeEnd) {
-    var clipStart = getTimeSeconds(clip.start);
-    var clipEnd = getTimeSeconds(clip.end);
-    var mid = (clipStart + clipEnd) / 2;
-    return mid >= rangeStart && mid <= rangeEnd;
+/* ============================================================
+   DIAGNOSTIC: List all clips on timeline
+   ============================================================ */
+function diagnosticListClips() {
+    try {
+        if (typeof app === "undefined" || !app || !app.project) {
+            return JSON.stringify({ success: false, error: "No project" });
+        }
+        var seq = app.project.activeSequence;
+        if (!seq) return JSON.stringify({ success: false, error: "No sequence" });
+
+        var result = { videoTracks: [], audioTracks: [] };
+
+        // Video tracks
+        for (var vt = 0; vt < seq.videoTracks.numTracks; vt++) {
+            var vTrack = seq.videoTracks[vt];
+            var vClips = [];
+            for (var vc = 0; vc < vTrack.clips.numItems; vc++) {
+                var vClip = vTrack.clips[vc];
+                var vStart = vClip.start;
+                var vEnd = vClip.end;
+                vClips.push({
+                    index: vc,
+                    startSec: getTimeSeconds(vStart),
+                    endSec: getTimeSeconds(vEnd),
+                    startType: typeof vStart,
+                    hasTicks: vStart && vStart.ticks !== undefined,
+                    hasSeconds: vStart && vStart.seconds !== undefined,
+                    methods: getMethodsList(vClip)
+                });
+            }
+            result.videoTracks.push({ track: vt, clipCount: vClips.length, clips: vClips });
+        }
+
+        // Audio tracks
+        for (var at = 0; at < seq.audioTracks.numTracks; at++) {
+            var aTrack = seq.audioTracks[at];
+            var aClips = [];
+            for (var ac = 0; ac < aTrack.clips.numItems; ac++) {
+                var aClip = aTrack.clips[ac];
+                var aStart = aClip.start;
+                var aEnd = aClip.end;
+                aClips.push({
+                    index: ac,
+                    startSec: getTimeSeconds(aStart),
+                    endSec: getTimeSeconds(aEnd),
+                    startType: typeof aStart,
+                    hasTicks: aStart && aStart.ticks !== undefined,
+                    hasSeconds: aStart && aStart.seconds !== undefined,
+                    methods: getMethodsList(aClip)
+                });
+            }
+            result.audioTracks.push({ track: at, clipCount: aClips.length, clips: aClips });
+        }
+
+        return JSON.stringify({ success: true, data: result });
+    } catch (err) {
+        return JSON.stringify({ success: false, error: err.toString() });
+    }
+}
+
+function getMethodsList(obj) {
+    var methods = [];
+    for (var key in obj) {
+        if (typeof obj[key] === "function") {
+            methods.push(key);
+        }
+    }
+    return methods.sort().slice(0, 30); // limit to 30
+}
+
+/* ============================================================
+   DIAGNOSTIC: Test clip removal methods
+   ============================================================ */
+function diagnosticTestRemove() {
+    try {
+        if (typeof app === "undefined" || !app || !app.project) {
+            return JSON.stringify({ success: false, error: "No project" });
+        }
+        var seq = app.project.activeSequence;
+        if (!seq) return JSON.stringify({ success: false, error: "No sequence" });
+
+        // Find the LAST video clip (least likely to break timeline)
+        var vTrack = seq.videoTracks[0];
+        if (!vTrack || vTrack.clips.numItems < 2) {
+            return JSON.stringify({ success: false, error: "Need at least 2 clips to test removal" });
+        }
+
+        var lastIdx = vTrack.clips.numItems - 1;
+        var clip = vTrack.clips[lastIdx];
+        var clipInfo = {
+            index: lastIdx,
+            startSec: getTimeSeconds(clip.start),
+            endSec: getTimeSeconds(clip.end)
+        };
+
+        var tests = [];
+
+        // Test 1: clip.remove(1, 1) — ripple delete
+        try {
+            clip.remove(1, 1);
+            tests.push("PASS: clip.remove(1, 1)");
+        } catch (e1) {
+            tests.push("FAIL: clip.remove(1, 1) — " + e1.toString());
+        }
+
+        // If that failed, test other methods on remaining clips
+        if (tests[0].indexOf("FAIL") === 0 && lastIdx > 0) {
+            var clip2 = vTrack.clips[lastIdx - 1];
+            try {
+                clip2.remove(1);
+                tests.push("PASS: clip.remove(1)");
+            } catch (e2) {
+                tests.push("FAIL: clip.remove(1) — " + e2.toString());
+            }
+        }
+
+        return JSON.stringify({
+            success: true,
+            clipTested: clipInfo,
+            totalClipsBefore: vTrack.clips.numItems,
+            tests: tests
+        });
+    } catch (err) {
+        return JSON.stringify({ success: false, error: err.toString() });
+    }
 }
 
 /* ============================================================
@@ -47,7 +168,6 @@ function testRazorCut() {
         var qeSeq = qe.project.getActiveSequence();
         if (!qeSeq) return JSON.stringify({ success: false, error: "No QE sequence" });
 
-        // Get playhead position
         var playhead = seq.getPlayerPosition();
         var results = [];
 
@@ -62,29 +182,20 @@ function testRazorCut() {
 
         // Test 2: ticks string
         try {
-            var ticks = String(Math.round(playhead.ticks));
+            var ticks = secondsToTicks(parseFloat(playhead.seconds) + 2.0);
             qeSeq.razor(ticks);
             results.push("PASS: ticks=" + ticks);
         } catch (e2) {
             results.push("FAIL: ticks — " + e2.toString());
         }
 
-        // Test 3: timecode string HH:MM:SS:FF
+        // Test 3: timecode string
         try {
             var tc = playhead.toString();
             qeSeq.razor(tc);
             results.push("PASS: timecode=" + tc);
         } catch (e3) {
             results.push("FAIL: timecode — " + e3.toString());
-        }
-
-        // Test 4: Number (not parseFloat)
-        try {
-            var rawNum = playhead.seconds + 2.0;
-            qeSeq.razor(rawNum);
-            results.push("PASS: Number=" + rawNum);
-        } catch (e4) {
-            results.push("FAIL: Number — " + e4.toString());
         }
 
         return JSON.stringify({
@@ -179,7 +290,6 @@ function getSourceMediaPath() {
             return JSON.stringify({ success: false, error: "No media found in timeline. Add clips first." });
         }
 
-        // Verify file exists
         var mediaFile = new File(filePath);
         if (!mediaFile.exists) {
             return JSON.stringify({ success: false, error: "File not found: " + filePath });
@@ -269,50 +379,36 @@ function applyCutPlan(cutsJSON) {
 
         var cuts;
         try {
-            cuts = JSON.parse(cutsJSON);
-        } catch (parseErr) {
-            return JSON.stringify({ success: false, error: "Invalid cuts JSON: " + parseErr.toString() });
+            var raw = decodeURIComponent(cutsJSON);
+            cuts = JSON.parse(raw);
+        } catch (e) {
+            try { cuts = JSON.parse(cutsJSON); } catch (e2) {
+                return JSON.stringify({ success: false, error: "Invalid cuts JSON: " + e.toString() });
+            }
         }
 
         if (!cuts || !cuts.length || cuts.length === 0) {
             return JSON.stringify({ success: false, error: "No cuts to apply" });
         }
 
-        // Enable QE API
         app.enableQE();
-        if (typeof qe === "undefined" || !qe.project) {
-            return JSON.stringify({ success: false, error: "QE API not available" });
-        }
-
         var qeSeq = qe.project.getActiveSequence();
         if (!qeSeq) {
             return JSON.stringify({ success: false, error: "No active sequence in QE" });
         }
 
-        // Sort cuts in reverse order (so indices don't shift)
         cuts.sort(function(a, b) { return b.start - a.start; });
 
         var cutsApplied = 0;
+        for (var i = 0; i < cuts.length; i++) {
+            try {
+                qeSeq.razor(secondsToTicks(cuts[i].start));
+                qeSeq.razor(secondsToTicks(cuts[i].end));
+                cutsApplied++;
+            } catch (razorErr) {}
+        }
 
-        // Use executeTransaction for undo support
-        app.project.executeTransaction(function(compound) {
-            for (var i = 0; i < cuts.length; i++) {
-                var cut = cuts[i];
-                try {
-                    // Razor at start and end of silence
-                    qeSeq.razor(cut.start);
-                    qeSeq.razor(cut.end);
-                    cutsApplied++;
-                } catch (razorErr) {
-                    // Continue with next cut
-                }
-            }
-        }, "CutThat Pro: Remove " + cutsApplied + " silences");
-
-        return JSON.stringify({
-            success: true,
-            cutsApplied: cutsApplied
-        });
+        return JSON.stringify({ success: true, cutsApplied: cutsApplied });
     } catch (err) {
         return JSON.stringify({ success: false, error: err.toString() });
     }
@@ -329,35 +425,30 @@ function addMarkersFromCuts(cutsJSON) {
 
         var cuts;
         try {
-            cuts = JSON.parse(cutsJSON);
-        } catch (parseErr) {
-            return JSON.stringify({ success: false, error: "Invalid cuts JSON" });
+            var raw = decodeURIComponent(cutsJSON);
+            cuts = JSON.parse(raw);
+        } catch (e) {
+            try { cuts = JSON.parse(cutsJSON); } catch (e2) {
+                return JSON.stringify({ success: false, error: "Invalid cuts JSON" });
+            }
         }
 
         var seq = app.project.activeSequence;
-        if (!seq) {
-            return JSON.stringify({ success: false, error: "No active sequence" });
-        }
+        if (!seq) return JSON.stringify({ success: false, error: "No active sequence" });
 
         var markersAdded = 0;
+        for (var i = 0; i < cuts.length; i++) {
+            try {
+                var marker = seq.markers.createMarker(cuts[i].start);
+                if (marker) {
+                    marker.name = "Silence " + (i + 1);
+                    marker.comments = "Duration: " + cuts[i].duration.toFixed(2) + "s";
+                    markersAdded++;
+                }
+            } catch (markerErr) {}
+        }
 
-        app.project.executeTransaction(function(compound) {
-            for (var i = 0; i < cuts.length; i++) {
-                try {
-                    var marker = seq.markers.createMarker(cuts[i].start);
-                    if (marker) {
-                        marker.name = "Silence " + (i + 1);
-                        marker.comments = "Duration: " + cuts[i].duration.toFixed(2) + "s";
-                        markersAdded++;
-                    }
-                } catch (markerErr) {}
-            }
-        }, "CutThat Pro: Add " + markersAdded + " markers");
-
-        return JSON.stringify({
-            success: true,
-            markersAdded: markersAdded
-        });
+        return JSON.stringify({ success: true, markersAdded: markersAdded });
     } catch (err) {
         return JSON.stringify({ success: false, error: err.toString() });
     }
@@ -372,9 +463,7 @@ function getSequenceInfoForCleanCut() {
             return JSON.stringify({ success: false, error: "No project" });
         }
         var seq = app.project.activeSequence;
-        if (!seq) {
-            return JSON.stringify({ success: false, error: "No sequence" });
-        }
+        if (!seq) return JSON.stringify({ success: false, error: "No sequence" });
         var sourceClip = "";
         try {
             var vTrack = seq.videoTracks[0];
@@ -425,9 +514,7 @@ function addRazorCutsToTimeline(cutsJSON) {
         }
         app.enableQE();
         var qeSeq = qe.project.getActiveSequence();
-        if (!qeSeq) {
-            return JSON.stringify({ success: false, error: "No QE sequence" });
-        }
+        if (!qeSeq) return JSON.stringify({ success: false, error: "No QE sequence" });
         var cutsAdded = 0;
         for (var i = 0; i < cuts.length; i++) {
             try {
@@ -460,9 +547,7 @@ function addSilenceMarkersToTimeline(cutsJSON) {
             }
         }
         var seq = app.project.activeSequence;
-        if (!seq) {
-            return JSON.stringify({ success: false, error: "No sequence" });
-        }
+        if (!seq) return JSON.stringify({ success: false, error: "No sequence" });
         var markersAdded = 0;
         for (var i = 0; i < cuts.length; i++) {
             try {
@@ -488,10 +573,8 @@ function addCaptionTrackToTimeline(srtContent) {
         if (typeof app === "undefined" || !app || !app.project) {
             return JSON.stringify({ success: false, error: "No project" });
         }
-        // Decode URI-encoded content from main.js
         var decodedSrt = srtContent;
         try { decodedSrt = decodeURIComponent(srtContent); } catch(de) {}
-        // Write SRT to temp file and import
         var tempPath = Folder.myDocuments.fsName + "/CutThatPro/temp/captions.srt";
         var tempFolder = new Folder(Folder.myDocuments.fsName + "/CutThatPro/temp");
         if (!tempFolder.exists) { tempFolder.create(); }
@@ -499,7 +582,6 @@ function addCaptionTrackToTimeline(srtContent) {
         srtFile.open("w");
         srtFile.write(decodedSrt);
         srtFile.close();
-        // Import the SRT file
         var importResult = app.project.importFiles([tempPath], false, app.project.rootItem, false);
         return JSON.stringify({ success: true, imported: importResult ? "yes" : "no", path: tempPath });
     } catch (err) {
@@ -520,9 +602,7 @@ function applyZoomKeyframes(zoomJSON) {
             return JSON.stringify({ success: false, error: "Invalid JSON" });
         }
         var seq = app.project.activeSequence;
-        if (!seq) {
-            return JSON.stringify({ success: false, error: "No sequence" });
-        }
+        if (!seq) return JSON.stringify({ success: false, error: "No sequence" });
         return JSON.stringify({ success: true, message: "Zoom keyframes: feature in development", count: zooms.length });
     } catch (err) {
         return JSON.stringify({ success: false, error: err.toString() });
@@ -533,7 +613,6 @@ function applyZoomKeyframes(zoomJSON) {
    IMPORT SEQUENCE XML
    ============================================================ */
 function importSequenceXML(xmlPath) {
-    // UNUSED — kept for backward compat, redirect to clean cut
     return JSON.stringify({ success: false, error: "Use applyCleanCutDirect instead" });
 }
 
@@ -560,16 +639,11 @@ function applyCleanCutDirect(cutsJSON) {
         }
 
         var seq = app.project.activeSequence;
-        if (!seq) {
-            return JSON.stringify({ success: false, error: "No active sequence" });
-        }
+        if (!seq) return JSON.stringify({ success: false, error: "No active sequence" });
 
-        // Enable QE API
         app.enableQE();
         var qeSeq = qe.project.getActiveSequence();
-        if (!qeSeq) {
-            return JSON.stringify({ success: false, error: "No QE sequence" });
-        }
+        if (!qeSeq) return JSON.stringify({ success: false, error: "No QE sequence" });
 
         var debug = [];
         var razorCount = 0;
@@ -581,54 +655,70 @@ function applyCleanCutDirect(cutsJSON) {
             var rEnd = Number(ranges[i].end);
             if (isNaN(rStart) || isNaN(rEnd)) continue;
 
-            var startTicks = secondsToTicks(rStart);
-            var endTicks = secondsToTicks(rEnd);
-
             try {
-                qeSeq.razor(startTicks);
-                qeSeq.razor(endTicks);
+                qeSeq.razor(secondsToTicks(rStart));
+                qeSeq.razor(secondsToTicks(rEnd));
                 razorCount++;
             } catch (razorErr) {
                 debug.push("razor_err[" + i + "]:" + razorErr.toString());
             }
         }
 
-        // Step 2: Remove silence clips using midpoint comparison
-        // Process ranges in REVERSE to avoid index shifts
+        // Step 2: List clips after razor for debugging
+        var vTrack = seq.videoTracks[0];
+        var aTrack = seq.audioTracks[0];
+        if (vTrack) {
+            debug.push("vClips:" + vTrack.clips.numItems);
+            for (var d = 0; d < Math.min(vTrack.clips.numItems, 5); d++) {
+                try {
+                    var dc = vTrack.clips[d];
+                    debug.push("vClip" + d + ":" + getTimeSeconds(dc.start).toFixed(3) + "-" + getTimeSeconds(dc.end).toFixed(3));
+                } catch(de) {}
+            }
+        }
+        if (aTrack) {
+            debug.push("aClips:" + aTrack.clips.numItems);
+        }
+
+        // Step 3: Remove silence clips using midpoint comparison
         for (var r = ranges.length - 1; r >= 0; r--) {
             var rangeStart = Number(ranges[r].start);
             var rangeEnd = Number(ranges[r].end);
 
-            // Remove video clips inside this silence range
-            for (var vt = 0; vt < seq.videoTracks.numTracks; vt++) {
-                var vTrack = seq.videoTracks[vt];
+            // Video clips
+            if (vTrack) {
                 for (var vc = vTrack.clips.numItems - 1; vc >= 0; vc--) {
-                    var vClip = vTrack.clips[vc];
-                    if (isClipInsideRange(vClip, rangeStart, rangeEnd)) {
-                        try {
-                            vClip.remove(1, 1); // ripple delete
+                    try {
+                        var vClip = vTrack.clips[vc];
+                        var vStart = getTimeSeconds(vClip.start);
+                        var vEnd = getTimeSeconds(vClip.end);
+                        var vMid = (vStart + vEnd) / 2;
+                        if (vMid >= rangeStart && vMid <= rangeEnd) {
+                            vClip.remove(1, 1);
                             removedCount++;
-                            debug.push("vRemoved[" + r + "]:clip" + vc);
-                        } catch (rmErr) {
-                            debug.push("vRmErr[" + r + "]:clip" + vc + ":" + rmErr.toString());
+                            debug.push("vRm:" + vc + " mid=" + vMid.toFixed(3));
                         }
+                    } catch (rmErr) {
+                        debug.push("vRmErr:" + vc + ":" + rmErr.toString());
                     }
                 }
             }
 
-            // Remove audio clips inside this silence range
-            for (var at = 0; at < seq.audioTracks.numTracks; at++) {
-                var aTrack = seq.audioTracks[at];
+            // Audio clips
+            if (aTrack) {
                 for (var ac = aTrack.clips.numItems - 1; ac >= 0; ac--) {
-                    var aClip = aTrack.clips[ac];
-                    if (isClipInsideRange(aClip, rangeStart, rangeEnd)) {
-                        try {
-                            aClip.remove(1, 1); // ripple delete
+                    try {
+                        var aClip = aTrack.clips[ac];
+                        var aStart = getTimeSeconds(aClip.start);
+                        var aEnd = getTimeSeconds(aClip.end);
+                        var aMid = (aStart + aEnd) / 2;
+                        if (aMid >= rangeStart && aMid <= rangeEnd) {
+                            aClip.remove(1, 1);
                             removedCount++;
-                            debug.push("aRemoved[" + r + "]:clip" + ac);
-                        } catch (rmErr) {
-                            debug.push("aRmErr[" + r + "]:clip" + ac + ":" + rmErr.toString());
+                            debug.push("aRm:" + ac + " mid=" + aMid.toFixed(3));
                         }
+                    } catch (rmErr) {
+                        debug.push("aRmErr:" + ac + ":" + rmErr.toString());
                     }
                 }
             }
@@ -673,9 +763,7 @@ function getTimelineInfo() {
             return JSON.stringify({ success: false, error: "No project" });
         }
         var seq = app.project.activeSequence;
-        if (!seq) {
-            return JSON.stringify({ success: false, error: "No sequence" });
-        }
+        if (!seq) return JSON.stringify({ success: false, error: "No sequence" });
 
         var videoCount = 0;
         var audioCount = 0;

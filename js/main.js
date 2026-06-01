@@ -407,8 +407,8 @@
      ============================================================ */
   function testConnection() {
     dom.btnTestConnection.disabled = true;
-    setStatus("Testing Premiere connection...");
-    setResult("Running: testPremiereConnection()");
+    setStatus("Testing connection + diagnostics...");
+    setResult("Running...");
 
     runScript("testPremiereConnection()", function (response, error) {
       if (error) {
@@ -418,19 +418,20 @@
         dom.btnTestConnection.disabled = false;
         return;
       }
-      setStatus("Connection OK");
-      setResult(response);
       setConnectionStatus(true);
 
-      // Also run razor diagnostic
-      setResult(response + "\n\nRunning razor diagnostic...");
-      runScript("testRazorCut()", function (razorResponse, razorError) {
-        dom.btnTestConnection.disabled = false;
-        if (razorError) {
-          setResult(response + "\n\nRazor test failed: " + razorError);
-          return;
-        }
-        setResult(response + "\n\nRazor diagnostic:\n" + razorResponse);
+      // Run full diagnostic
+      setResult(response + "\n\nRunning clip diagnostic...");
+      runScript("diagnosticListClips()", function (clipResponse) {
+        var output = response + "\n\n=== CLIPS ===\n" + clipResponse;
+
+        // Run razor test
+        runScript("testRazorCut()", function (razorResponse) {
+          output += "\n\n=== RAZOR ===\n" + razorResponse;
+          setResult(output);
+          setStatus("Diagnostics complete — check result box");
+          dom.btnTestConnection.disabled = false;
+        });
       });
     });
   }
