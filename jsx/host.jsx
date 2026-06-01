@@ -7,8 +7,29 @@
 /* ============================================================
    HELPER: Convert seconds to Premiere ticks
    ============================================================ */
+var TICKS_PER_SECOND = 254016000000;
+
 function secondsToTicks(sec) {
-    return String(Math.round(parseFloat(sec) * 254016000000));
+    return String(Math.round(parseFloat(sec) * TICKS_PER_SECOND));
+}
+
+function ticksToSeconds(ticks) {
+    return Number(ticks) / TICKS_PER_SECOND;
+}
+
+function getTimeSeconds(timeObj) {
+    if (!timeObj) return 0;
+    if (typeof timeObj === "number") return timeObj;
+    if (timeObj.ticks !== undefined) return ticksToSeconds(timeObj.ticks);
+    if (timeObj.seconds !== undefined) return Number(timeObj.seconds);
+    return 0;
+}
+
+function isClipInsideRange(clip, rangeStart, rangeEnd) {
+    var clipStart = getTimeSeconds(clip.start);
+    var clipEnd = getTimeSeconds(clip.end);
+    var mid = (clipStart + clipEnd) / 2;
+    return mid >= rangeStart && mid <= rangeEnd;
 }
 
 /* ============================================================
@@ -525,19 +546,17 @@ function applyCleanCutDirect(cutsJSON) {
             return JSON.stringify({ success: false, error: "No project" });
         }
 
-        // Decode URI-encoded JSON from main.js
-        var cuts;
+        var ranges;
         try {
             var raw = decodeURIComponent(cutsJSON);
-            cuts = JSON.parse(raw);
+            ranges = JSON.parse(raw);
         } catch (e) {
-            // Fallback: maybe already decoded
-            try { cuts = JSON.parse(cutsJSON); } catch (e2) {
+            try { ranges = JSON.parse(cutsJSON); } catch (e2) {
                 return JSON.stringify({ success: false, error: "Invalid JSON: " + e.toString() });
             }
         }
-        if (!cuts || cuts.length === 0) {
-            return JSON.stringify({ success: false, error: "No cuts" });
+        if (!ranges || ranges.length === 0) {
+            return JSON.stringify({ success: false, error: "No ranges" });
         }
 
         var seq = app.project.activeSequence;
@@ -545,68 +564,71 @@ function applyCleanCutDirect(cutsJSON) {
             return JSON.stringify({ success: false, error: "No active sequence" });
         }
 
-        // EXACT same QE setup as addRazorCutsToTimeline
+        // Enable QE API
         app.enableQE();
         var qeSeq = qe.project.getActiveSequence();
         if (!qeSeq) {
             return JSON.stringify({ success: false, error: "No QE sequence" });
         }
 
-        // Sort cuts DESCENDING (process end-to-start to avoid timecode shifts)
-        cuts.sort(function(a, b) { return b.start - a.start; });
+        var debug = [];
+        var razorCount = 0;
+        var removedCount = 0;
 
-        var debugInfo = [];
-        var totalRazored = 0;
+        // Step 1: Razor at start and end of each silence range
+        for (var i = 0; i < ranges.length; i++) {
+            var rStart = Number(ranges[i].start);
+            var rEnd = Number(ranges[i].end);
+            if (isNaN(rStart) || isNaN(rEnd)) continue;
 
-        // Step 1: Razor at all boundaries
-        for (var i = 0; i < cuts.length; i++) {
+            var startTicks = secondsToTicks(rStart);
+            var endTicks = secondsToTicks(rEnd);
+
             try {
-                qeSeq.razor(secondsToTicks(cuts[i].start));
-                qeSeq.razor(secondsToTicks(cuts[i].end));
-                totalRazored++;
+                qeSeq.razor(startTicks);
+                qeSeq.razor(endTicks);
+                razorCount++;
             } catch (razorErr) {
-                debugInfo.push("razor_err:" + razorErr.toString());
+                debug.push("razor_err[" + i + "]:" + razorErr.toString());
             }
         }
 
-        // Step 2: Find and remove silence clips (reverse iterate)
-        var totalRemoved = 0;
-        for (var vt = 0; vt < seq.videoTracks.numTracks; vt++) {
-            var vTrack = seq.videoTracks[vt];
-            for (var ci = vTrack.clips.numItems - 1; ci >= 0; ci--) {
-                var clip = vTrack.clips[ci];
-                var cs = clip.start.seconds;
-                var ce = clip.end.seconds;
-                for (var k = 0; k < cuts.length; k++) {
-                    if (cs >= cuts[k].start - 0.05 && ce <= cuts[k].end + 0.05) {
+        // Step 2: Remove silence clips using midpoint comparison
+        // Process ranges in REVERSE to avoid index shifts
+        for (var r = ranges.length - 1; r >= 0; r--) {
+            var rangeStart = Number(ranges[r].start);
+            var rangeEnd = Number(ranges[r].end);
+
+            // Remove video clips inside this silence range
+            for (var vt = 0; vt < seq.videoTracks.numTracks; vt++) {
+                var vTrack = seq.videoTracks[vt];
+                for (var vc = vTrack.clips.numItems - 1; vc >= 0; vc--) {
+                    var vClip = vTrack.clips[vc];
+                    if (isClipInsideRange(vClip, rangeStart, rangeEnd)) {
                         try {
-                            clip.remove(true);
-                            totalRemoved++;
+                            vClip.remove(1, 1); // ripple delete
+                            removedCount++;
+                            debug.push("vRemoved[" + r + "]:clip" + vc);
                         } catch (rmErr) {
-                            debugInfo.push("rmErr:" + rmErr.toString());
+                            debug.push("vRmErr[" + r + "]:clip" + vc + ":" + rmErr.toString());
                         }
-                        break;
                     }
                 }
             }
-        }
 
-        // Step 3: Same for audio tracks
-        for (var at = 0; at < seq.audioTracks.numTracks; at++) {
-            var aTrack = seq.audioTracks[at];
-            for (var ci2 = aTrack.clips.numItems - 1; ci2 >= 0; ci2--) {
-                var aClip = aTrack.clips[ci2];
-                var acs = aClip.start.seconds;
-                var ace = aClip.end.seconds;
-                for (var k2 = 0; k2 < cuts.length; k2++) {
-                    if (acs >= cuts[k2].start - 0.05 && ace <= cuts[k2].end + 0.05) {
+            // Remove audio clips inside this silence range
+            for (var at = 0; at < seq.audioTracks.numTracks; at++) {
+                var aTrack = seq.audioTracks[at];
+                for (var ac = aTrack.clips.numItems - 1; ac >= 0; ac--) {
+                    var aClip = aTrack.clips[ac];
+                    if (isClipInsideRange(aClip, rangeStart, rangeEnd)) {
                         try {
-                            aClip.remove(true);
-                            totalRemoved++;
-                        } catch (armErr) {
-                            debugInfo.push("armErr:" + armErr.toString());
+                            aClip.remove(1, 1); // ripple delete
+                            removedCount++;
+                            debug.push("aRemoved[" + r + "]:clip" + ac);
+                        } catch (rmErr) {
+                            debug.push("aRmErr[" + r + "]:clip" + ac + ":" + rmErr.toString());
                         }
-                        break;
                     }
                 }
             }
@@ -614,9 +636,10 @@ function applyCleanCutDirect(cutsJSON) {
 
         return JSON.stringify({
             success: true,
-            cutsApplied: totalRazored,
-            clipsRemoved: totalRemoved,
-            debug: debugInfo.join("; ")
+            rangesProcessed: ranges.length,
+            razorCount: razorCount,
+            clipsRemoved: removedCount,
+            debug: debug.join("; ")
         });
     } catch (err) {
         return JSON.stringify({ success: false, error: err.toString() });
