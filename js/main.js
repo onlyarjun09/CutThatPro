@@ -750,7 +750,7 @@
         var cutData = parseJsonResponse(cutResponse);
         if (cutData && cutData.success) {
           setStatus("Clean cut applied!");
-          setResult("Removed " + (cutData.clipsRemoved || 0) + " silence clips from " + (cutData.cutsApplied || 0) + " cuts\nDebug: " + (cutData.debug || "none"));
+          setResult("Razor: " + (cutData.razorCount || 0) + " cuts | Removed: " + (cutData.clipsRemoved || 0) + " clips\nDebug: " + (cutData.debug || "none"));
         } else {
           setStatus("Cut issue");
           setResult(cutResponse);

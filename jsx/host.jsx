@@ -649,6 +649,11 @@ function applyCleanCutDirect(cutsJSON) {
         var razorCount = 0;
         var removedCount = 0;
 
+        debug.push("rangesLen:" + ranges.length);
+        if (ranges.length > 0) {
+            debug.push("range0:" + Number(ranges[0].start) + "-" + Number(ranges[0].end));
+        }
+
         // Step 1: Razor at start and end of each silence range
         for (var i = 0; i < ranges.length; i++) {
             var rStart = Number(ranges[i].start);
