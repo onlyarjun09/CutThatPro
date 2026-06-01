@@ -5,6 +5,73 @@
  */
 
 /* ============================================================
+   TEST RAZOR CUT — diagnostic: tries different time formats
+   ============================================================ */
+function testRazorCut() {
+    try {
+        if (typeof app === "undefined" || !app || !app.project) {
+            return JSON.stringify({ success: false, error: "No project" });
+        }
+        var seq = app.project.activeSequence;
+        if (!seq) return JSON.stringify({ success: false, error: "No sequence" });
+
+        app.enableQE();
+        var qeSeq = qe.project.getActiveSequence();
+        if (!qeSeq) return JSON.stringify({ success: false, error: "No QE sequence" });
+
+        // Get playhead position
+        var playhead = seq.getPlayerPosition();
+        var results = [];
+
+        // Test 1: float seconds
+        try {
+            var sec = parseFloat(playhead.seconds) + 1.0;
+            qeSeq.razor(sec);
+            results.push("PASS: float seconds=" + sec);
+        } catch (e1) {
+            results.push("FAIL: float seconds — " + e1.toString());
+        }
+
+        // Test 2: ticks string
+        try {
+            var ticks = String(Math.round(playhead.ticks));
+            qeSeq.razor(ticks);
+            results.push("PASS: ticks=" + ticks);
+        } catch (e2) {
+            results.push("FAIL: ticks — " + e2.toString());
+        }
+
+        // Test 3: timecode string HH:MM:SS:FF
+        try {
+            var tc = playhead.toString();
+            qeSeq.razor(tc);
+            results.push("PASS: timecode=" + tc);
+        } catch (e3) {
+            results.push("FAIL: timecode — " + e3.toString());
+        }
+
+        // Test 4: Number (not parseFloat)
+        try {
+            var rawNum = playhead.seconds + 2.0;
+            qeSeq.razor(rawNum);
+            results.push("PASS: Number=" + rawNum);
+        } catch (e4) {
+            results.push("FAIL: Number — " + e4.toString());
+        }
+
+        return JSON.stringify({
+            success: true,
+            playheadSeconds: playhead.seconds,
+            playheadTicks: String(playhead.ticks),
+            playheadString: playhead.toString(),
+            tests: results
+        });
+    } catch (err) {
+        return JSON.stringify({ success: false, error: err.toString() });
+    }
+}
+
+/* ============================================================
    HOST PING (used by loadJSX to verify host loaded)
    ============================================================ */
 function cutThatHostPing() {

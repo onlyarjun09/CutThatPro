@@ -411,16 +411,27 @@
     setResult("Running: testPremiereConnection()");
 
     runScript("testPremiereConnection()", function (response, error) {
-      dom.btnTestConnection.disabled = false;
       if (error) {
         setStatus("Connection failed");
         setResult(error);
         setConnectionStatus(false);
+        dom.btnTestConnection.disabled = false;
         return;
       }
       setStatus("Connection OK");
       setResult(response);
       setConnectionStatus(true);
+
+      // Also run razor diagnostic
+      setResult(response + "\n\nRunning razor diagnostic...");
+      runScript("testRazorCut()", function (razorResponse, razorError) {
+        dom.btnTestConnection.disabled = false;
+        if (razorError) {
+          setResult(response + "\n\nRazor test failed: " + razorError);
+          return;
+        }
+        setResult(response + "\n\nRazor diagnostic:\n" + razorResponse);
+      });
     });
   }
 
