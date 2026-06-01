@@ -655,21 +655,39 @@ function applyCleanCutDirect(cutsJSON) {
         }
 
         // Step 1: Razor at start and end of each silence range
+        // Try BOTH sequence-level and track-level razor
         for (var i = 0; i < ranges.length; i++) {
             var rStart = Number(ranges[i].start);
             var rEnd = Number(ranges[i].end);
             if (isNaN(rStart) || isNaN(rEnd)) continue;
 
+            var startTicks = secondsToTicks(rStart);
+            var endTicks = secondsToTicks(rEnd);
+
             try {
-                qeSeq.razor(secondsToTicks(rStart));
-                qeSeq.razor(secondsToTicks(rEnd));
+                // Method A: Sequence-level QE razor
+                qeSeq.razor(startTicks);
+                qeSeq.razor(endTicks);
                 razorCount++;
             } catch (razorErr) {
-                debug.push("razor_err[" + i + "]:" + razorErr.toString());
+                // Method B: Track-level razor
+                try {
+                    if (seq.videoTracks[0]) {
+                        seq.videoTracks[0].razor(startTicks);
+                        seq.videoTracks[0].razor(endTicks);
+                    }
+                    if (seq.audioTracks[0]) {
+                        seq.audioTracks[0].razor(startTicks);
+                        seq.audioTracks[0].razor(endTicks);
+                    }
+                    razorCount++;
+                } catch (trackErr) {
+                    debug.push("razorFail[" + i + "]:qe=" + razorErr.toString() + ";track=" + trackErr.toString());
+                }
             }
         }
 
-        // Step 2: List clips after razor for debugging
+        // Step 1b: List clips after razor for debugging
         var vTrack = seq.videoTracks[0];
         var aTrack = seq.audioTracks[0];
         if (vTrack) {
